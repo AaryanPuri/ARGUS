@@ -1293,6 +1293,14 @@ class ArgusSession:
             except Exception:
                 pass
 
+        # Tool chain analysis — deterministic, always-on
+        try:
+            from argus.tool_chain_analyzer import analyze_tool_chains
+
+            record.tool_chain_findings = analyze_tool_chains(record)
+        except Exception:
+            pass
+
         # Apply redaction / state stripping before persisting to disk
         if not self._persist_state:
             record.initial_state = {}

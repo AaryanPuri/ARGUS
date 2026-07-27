@@ -75,6 +75,20 @@ class AnomalySignal:
     field_path: str  # dotted path in output, or "" for whole output
 
 
+@dataclass(frozen=True)
+class ToolChainFinding:
+    """A cross-node tool usage anti-pattern detected across the run."""
+
+    finding_id: str  # "TC-001" through "TC-004"
+    # "retry_storm" | "ordering_anomaly" | "unused_result" | "argument_degradation"
+    finding_type: str
+    severity: str  # "critical" | "warning"
+    nodes_involved: tuple[str, ...]
+    description: str
+    evidence: str  # short supporting data
+    confidence: float  # 0.0–1.0
+
+
 @dataclass
 class BehaviorConfig:
     """Pipeline-level behavior configuration."""
@@ -253,6 +267,7 @@ class RunRecord:
     llm_investigation: LLMInvestigationResult | None = None
     replay_comparison: ReplayComparisonResult | None = None
     loop_analyses: list[LoopAnalysisResult] = field(default_factory=list)
+    tool_chain_findings: list[ToolChainFinding] = field(default_factory=list)
     dry_run: bool = False  # True if this run skipped persistence (VAR-75)
 
 

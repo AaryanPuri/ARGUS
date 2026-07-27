@@ -248,6 +248,16 @@ export interface ReplayComparisonResult {
   error?: string | null
 }
 
+export interface ToolChainFinding {
+  finding_id: string
+  finding_type: 'retry_storm' | 'ordering_anomaly' | 'unused_result' | 'argument_degradation'
+  severity: 'critical' | 'warning'
+  nodes_involved: string[]
+  description: string
+  evidence: string
+  confidence: number
+}
+
 export interface LoopIterationDiff {
   from_attempt: number
   to_attempt: number
@@ -298,6 +308,7 @@ export interface RunRecord {
   llm_investigation?: LLMInvestigationResult | null
   replay_comparison?: ReplayComparisonResult | null
   loop_analyses?: LoopAnalysisResult[] | null
+  tool_chain_findings?: ToolChainFinding[] | null
   node_fn_refs?: Record<string, string> | null
   node_fn_paths?: Record<string, string> | null
   dry_run?: boolean

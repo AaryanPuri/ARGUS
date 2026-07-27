@@ -26,6 +26,7 @@ from argus.models import (
     SemanticSignal,
     SuggestedSignature,
     TimelineEvent,
+    ToolChainFinding,
     ToolFailure,
     ValidatorResult,
 )
@@ -274,6 +275,7 @@ def _deserialize_run(data: dict[str, Any]) -> RunRecord:
     rc_data = data.get("replay_comparison")
     replay_comparison = _deserialize_replay_comparison(rc_data) if rc_data else None
     loop_analyses = _deserialize_loop_analyses(data.get("loop_analyses", []))
+    tool_chain_findings = _deserialize_tool_chain_findings(data.get("tool_chain_findings", []))
     return RunRecord(
         run_id=data["run_id"],
         argus_version=data.get("argus_version", "unknown"),
@@ -302,6 +304,7 @@ def _deserialize_run(data: dict[str, Any]) -> RunRecord:
         llm_investigation=llm_investigation,
         replay_comparison=replay_comparison,
         loop_analyses=loop_analyses,
+        tool_chain_findings=tool_chain_findings,
         dry_run=data.get("dry_run", False),
     )
 
@@ -467,6 +470,23 @@ def _deserialize_loop_analyses(
             )
         )
     return results
+
+
+def _deserialize_tool_chain_findings(
+    items: list[dict[str, Any]],
+) -> list[ToolChainFinding]:
+    return [
+        ToolChainFinding(
+            finding_id=f.get("finding_id", ""),
+            finding_type=f.get("finding_type", ""),
+            severity=f.get("severity", "warning"),
+            nodes_involved=tuple(f.get("nodes_involved", ())),
+            description=f.get("description", ""),
+            evidence=f.get("evidence", ""),
+            confidence=f.get("confidence", 0.0),
+        )
+        for f in items
+    ]
 
 
 def _deserialize_event(data: dict[str, Any]) -> NodeEvent:

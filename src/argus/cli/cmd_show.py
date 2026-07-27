@@ -499,6 +499,9 @@ def _print_run(record: RunRecord) -> None:
     # ── Correlation ───────────────────────────────────────────────────────
     _print_correlation_panel(record)
 
+    # ── Tool Chain ────────────────────────────────────────────────────────
+    _print_tool_chain_panel(record)
+
     # ── AI Fix Advice ─────────────────────────────────────────────────────
     _print_investigation_panel(record)
 
@@ -561,6 +564,43 @@ def _print_correlation_panel(record: RunRecord) -> None:
     panel = Panel(
         "\n".join(lines),
         title="[dim]Correlation[/dim]",
+        title_align="left",
+        border_style="dim",
+        padding=(0, 1),
+    )
+    console.print()
+    console.print(panel)
+
+
+def _print_tool_chain_panel(record: RunRecord) -> None:
+    """Print tool chain analysis findings when detected."""
+    if not record.tool_chain_findings:
+        return
+
+    _SEVERITY_STYLE = {"critical": "bold red", "warning": "bold yellow"}
+    _TYPE_LABEL = {
+        "retry_storm": "retry storm",
+        "ordering_anomaly": "ordering",
+        "unused_result": "unused result",
+        "argument_degradation": "arg degradation",
+    }
+
+    lines: list[str] = []
+    for f in record.tool_chain_findings:
+        sev_style = _SEVERITY_STYLE.get(f.severity, "dim")
+        label = _TYPE_LABEL.get(f.finding_type, f.finding_type)
+        nodes = " -> ".join(f.nodes_involved)
+        lines.append(
+            f"  [{sev_style}]{f.finding_id}[/{sev_style}]  "
+            f"[dim]{label}[/dim]  [bold]{nodes}[/bold]"
+        )
+        lines.append(f"    [italic]{f.description}[/italic]")
+        lines.append(f"    [dim]{f.evidence}[/dim]")
+        lines.append("")
+
+    panel = Panel(
+        "\n".join(lines).rstrip(),
+        title="[dim]Tool Chain[/dim]",
         title_align="left",
         border_style="dim",
         padding=(0, 1),
