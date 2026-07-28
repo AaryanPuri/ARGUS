@@ -10,6 +10,7 @@ export const STEP_ICON: Record<string, { icon: string; color: string }> = {
   semantic_fail:  { icon: '\u2298', color: '#a855f7' },
   interrupted:    { icon: '\u23F8', color: '#f59e0b' },
   skipped:        { icon: '\u25CB', color: '#6b7280' },
+  retried:        { icon: '\u21BB', color: '#6b7280' },
 }
 
 export const STEP_LABEL: Record<string, { label: string; color: string }> = {
@@ -20,6 +21,7 @@ export const STEP_LABEL: Record<string, { label: string; color: string }> = {
   semantic_fail:  { label: 'Semantic Fail',  color: '#a855f7' },
   interrupted:    { label: 'Interrupted',    color: '#f59e0b' },
   skipped:        { label: 'Skipped',       color: '#6b7280' },
+  retried:        { label: 'Retried',       color: '#6b7280' },
 }
 
 export const STATUS_DOT_COLOR: Record<string, string> = {
@@ -253,8 +255,8 @@ export function computeDiffs(runA: RunRecord, runB: RunRecord): { nodes: NodeDif
     const durDiff = formatDurDiff(before?.duration_ms, after?.duration_ms)
     const hasChanges = statusChanged || fieldDiffs.length > 0 || inspectionDiffs.length > 0 || validatorDiffs.length > 0
 
-    const bBad = before && ['crashed', 'fail', 'semantic_fail'].includes(before.status)
-    const aBad = after && ['crashed', 'fail', 'semantic_fail'].includes(after.status)
+    const bBad = before && ['crashed', 'fail', 'semantic_fail', 'degraded_input'].includes(before.status)
+    const aBad = after && ['crashed', 'fail', 'semantic_fail', 'degraded_input'].includes(after.status)
     const isFixed = !!(statusChanged && bBad && after?.status === 'pass')
     const isRegression = !!(statusChanged && before?.status === 'pass' && aBad)
     const isNew = !before && !!after
@@ -474,7 +476,7 @@ export function computeChangeImpact(nodes: NodeDiff[]): ChangeImpact {
     else if (n.isFixed) positive++
     else if (n.isRegression) negative++
     else if (n.statusChanged) {
-      const bBad = n.before && ['crashed', 'fail', 'semantic_fail'].includes(n.before.status)
+      const bBad = n.before && ['crashed', 'fail', 'semantic_fail', 'degraded_input'].includes(n.before.status)
       if (bBad) positive++
       else negative++
     } else if (n.inspectionDiffs.some((d) => d.iconColor === '#22c55e')) positive++

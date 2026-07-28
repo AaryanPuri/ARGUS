@@ -81,6 +81,15 @@ function statusVisual(status: StepStatus | undefined, degradedDownstream: boolea
   if (status === 'semantic_fail') {
     return { color: '#9a6dc6', border: 'rgba(154,109,198,0.38)', bg: 'rgba(154,109,198,0.075)', soft: 'rgba(154,109,198,0.14)', icon: 'warn' as const, dashed: false }
   }
+  if (status === 'degraded_input') {
+    return { color: '#d49a2e', border: 'rgba(212,154,46,0.42)', bg: 'rgba(212,154,46,0.075)', soft: 'rgba(212,154,46,0.14)', icon: 'warn' as const, dashed: false }
+  }
+  if (status === 'interrupted') {
+    return { color: '#d49a2e', border: 'rgba(212,154,46,0.42)', bg: 'rgba(212,154,46,0.075)', soft: 'rgba(212,154,46,0.14)', icon: 'warn' as const, dashed: false }
+  }
+  if (status === 'skipped' || status === 'retried') {
+    return { color: '#5d6370', border: '#2c2f3a', bg: 'rgba(28,29,36,0.5)', soft: 'rgba(152,162,179,0.12)', icon: null, dashed: true }
+  }
   return { color: '#f97316', border: 'rgba(249,115,22,0.34)', bg: 'rgba(249,115,22,0.065)', soft: 'rgba(249,115,22,0.14)', icon: 'down' as const, dashed: true }
 }
 

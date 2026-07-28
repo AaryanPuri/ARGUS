@@ -806,9 +806,18 @@ def _print_cycle_group(
             elif status == "interrupted":
                 icon = "[bold yellow]⏸[/bold yellow]"
                 label = "[bold yellow]interrupted[/bold yellow]"
-            else:
+            elif status == "skipped":
+                icon = "[dim]○[/dim]"
+                label = "[dim]skipped[/dim]"
+            elif status == "retried":
+                icon = "[dim]↻[/dim]"
+                label = "[dim]retried[/dim]"
+            elif status == "crashed":
                 icon = "[bold red]✗[/bold red]"
                 label = "[bold red]crashed[/bold red]"
+            else:
+                icon = "[dim]?[/dim]"
+                label = f"[dim]{status}[/dim]"
 
             pad = " " * (name_col - len(event.node_name))
             dur = f"[italic dim]{event.duration_ms:.0f} ms[/italic dim]"
@@ -874,9 +883,21 @@ def _print_parallel_group(
         elif status == "interrupted":
             icon = "[bold yellow]⏸[/bold yellow]"
             label = "[bold yellow]interrupted[/bold yellow]"
-        else:
+        elif status == "degraded_input":
+            icon = "[bold yellow]⬇[/bold yellow]"
+            label = "[bold yellow]degraded input[/bold yellow]"
+        elif status == "skipped":
+            icon = "[dim]○[/dim]"
+            label = "[dim]skipped[/dim]"
+        elif status == "retried":
+            icon = "[dim]↻[/dim]"
+            label = "[dim]retried[/dim]"
+        elif status == "crashed":
             icon = "[bold red]✗[/bold red]"
             label = "[bold red]crashed[/bold red]"
+        else:
+            icon = "[dim]?[/dim]"
+            label = f"[dim]{status}[/dim]"
 
         pad = " " * (name_col - len(event.node_name))
         dur = f"[italic dim]{event.duration_ms:.0f} ms[/italic dim]"
@@ -983,9 +1004,16 @@ def _print_node(
     elif event.status == "skipped":
         icon = "[dim]○[/dim]"
         label = "[dim]skipped[/dim]"
-    else:
+    elif event.status == "retried":
+        icon = "[dim]↻[/dim]"
+        label = "[dim]retried[/dim]"
+    elif event.status == "crashed":
         icon = "[bold red]✗[/bold red]"
         label = "[bold red]crashed[/bold red]"
+    else:
+        # Unknown status — show actual value instead of assuming crashed
+        icon = "[dim]?[/dim]"
+        label = f"[dim]{event.status}[/dim]"
 
     # ── Node name (bold) + duration (italic dim) ───────────────────────────
     pad = " " * (name_col - len(event.node_name))

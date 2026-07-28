@@ -14,6 +14,9 @@ const C_CYAN = '#06b6d4'
 function iterationStatus(events: NodeEvent[]): { dot: string; color: string } {
   if (events.some((e) => e.status === 'crashed')) return { dot: '✗', color: C_RED }
   if (events.some((e) => ['fail', 'semantic_fail'].includes(e.status))) return { dot: '⚠', color: C_AMBER }
+  if (events.some((e) => e.status === 'degraded_input')) return { dot: '⚠', color: C_AMBER }
+  if (events.some((e) => e.status === 'interrupted')) return { dot: '⏸', color: C_AMBER }
+  if (events.every((e) => e.status === 'skipped')) return { dot: '⊘', color: C_GRAY }
   if (events.every((e) => e.status === 'retried')) return { dot: '↻', color: C_GRAY }
   return { dot: '✓', color: C_GREEN }
 }

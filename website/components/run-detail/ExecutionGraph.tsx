@@ -64,6 +64,7 @@ function mapStatus(s: StepStatus | undefined): MappedStatus {
   if (s === 'degraded_input') return 'degraded'
   if (s === 'interrupted') return 'running'
   if (s === 'skipped') return 'skipped'
+  if (s === 'retried') return 'skipped'
   return 'succeeded'
 }
 

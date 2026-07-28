@@ -140,10 +140,26 @@ def replay_run(
             name = f"[bold]{step.node_name}[/bold]"
             icon = "[bold yellow]⏸[/bold yellow]"
             label = "[bold yellow]interrupted[/bold yellow]"
-        else:
+        elif step.status == "degraded_input":
+            name = f"[bold]{step.node_name}[/bold]"
+            icon = "[bold yellow]⚠[/bold yellow]"
+            label = "[bold yellow]degraded_input[/bold yellow]"
+        elif step.status == "skipped":
+            name = f"[bold]{step.node_name}[/bold]"
+            icon = "[dim]⊘[/dim]"
+            label = "[dim]skipped[/dim]"
+        elif step.status == "retried":
+            name = f"[bold]{step.node_name}[/bold]"
+            icon = "[dim]↻[/dim]"
+            label = "[dim]retried[/dim]"
+        elif step.status == "crashed":
             name = f"[bold red]{step.node_name}[/bold red]"
             icon = "[bold red]✗[/bold red]"
             label = "[bold red]crashed[/bold red]"
+        else:
+            name = f"[bold]{step.node_name}[/bold]"
+            icon = "[dim]?[/dim]"
+            label = f"[dim]{step.status}[/dim]"
 
         console.print(f"  [dim]{number:>2}[/dim]  {name}{pad}  {dur}   {icon}  {label}")
 
@@ -309,7 +325,16 @@ def inspect_step(run_id: str, step_name: str) -> None:
         )
         return
 
-    status_style = {"pass": "green", "fail": "yellow", "crashed": "red"}.get(event.status, "dim")
+    status_style = {
+        "pass": "green",
+        "fail": "yellow",
+        "crashed": "red",
+        "semantic_fail": "magenta",
+        "degraded_input": "yellow",
+        "interrupted": "yellow",
+        "skipped": "dim",
+        "retried": "dim",
+    }.get(event.status, "dim")
     console.print()
     hdr = Text()
     hdr.append(f"  {step_name}", style="bold")

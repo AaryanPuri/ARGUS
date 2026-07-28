@@ -50,7 +50,7 @@ export default function MetricsGrid({ run, compact = false }: { run: RunRecord; 
   const steps = run.steps ?? []
   const totalNodes = steps.length
   const passedNodes = steps.filter((s) => s.status === 'pass').length
-  const failedNodes = steps.filter((s) => s.status !== 'pass').length
+  const failedNodes = steps.filter((s) => !['pass', 'skipped', 'retried', 'degraded_input'].includes(s.status)).length
   const successRate = totalNodes > 0 ? Math.round((passedNodes / totalNodes) * 100) : null
 
   const completed = run.completed_at != null

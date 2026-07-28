@@ -19,6 +19,9 @@ _STATUS_STYLE = {
     "crashed": "bold red",
     "semantic_fail": "bold magenta",
     "interrupted": "bold yellow",
+    "degraded_input": "bold yellow",
+    "skipped": "dim",
+    "retried": "dim",
 }
 
 _STATUS_LABEL = {
@@ -27,6 +30,9 @@ _STATUS_LABEL = {
     "crashed": "crashed",
     "semantic_fail": "semantic fail",
     "interrupted": "interrupted",
+    "degraded_input": "⚠ degraded",
+    "skipped": "⊘ skipped",
+    "retried": "↻ retried",
 }
 
 _OVERALL_STYLE = {
@@ -103,8 +109,8 @@ def diff_runs(run_id_a: str, run_id_b: str | None = None) -> None:
             changed = _print_node_diff(name, b_event, a_event, name_col)
             if changed:
                 stats["changed"] += 1
-                b_bad = b_event.status in ("crashed", "fail", "semantic_fail")
-                a_bad = a_event.status in ("crashed", "fail", "semantic_fail")
+                b_bad = b_event.status in ("crashed", "fail", "semantic_fail", "degraded_input")
+                a_bad = a_event.status in ("crashed", "fail", "semantic_fail", "degraded_input")
                 if b_bad and a_event.status == "pass":
                     stats["fixed"] += 1
                 elif b_event.status == "pass" and a_bad:
@@ -214,10 +220,10 @@ def _print_node_diff(
         a_style = _STATUS_STYLE.get(after.status, "dim")
         b_label = _STATUS_LABEL.get(before.status, before.status)
         a_label = _STATUS_LABEL.get(after.status, after.status)
-        b_was_bad = before.status in ("crashed", "fail", "semantic_fail")
+        b_was_bad = before.status in ("crashed", "fail", "semantic_fail", "degraded_input")
         b_was_good = before.status == "pass"
         a_is_good = after.status == "pass"
-        a_is_bad = after.status in ("crashed", "fail", "semantic_fail")
+        a_is_bad = after.status in ("crashed", "fail", "semantic_fail", "degraded_input")
         if b_was_bad and a_is_good:
             marker = "  [bold green]FIXED[/bold green]"
         elif b_was_good and a_is_bad:

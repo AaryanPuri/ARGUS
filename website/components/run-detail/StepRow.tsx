@@ -30,6 +30,20 @@ function ResultBadge({ event }: { event: NodeEvent }) {
       </span>
     )
   }
+  if (status === 'skipped' || status === 'retried') {
+    return (
+      <span className="flex items-center gap-1.5 text-xs font-medium text-muted-foreground">
+        {display.label}
+      </span>
+    )
+  }
+  if (status === 'interrupted') {
+    return (
+      <span className="flex items-center gap-1.5 text-xs font-medium" style={{ color: 'var(--warning)' }}>
+        {display.label}
+      </span>
+    )
+  }
   return (
     <span className="flex items-center gap-1.5 text-xs font-medium" style={{ color: 'var(--failure)' }}>
       <AlertTriangle className="size-3.5" />

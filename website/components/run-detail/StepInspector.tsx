@@ -30,6 +30,8 @@ function statusBadge(status: string) {
     semantic_fail:  { label: 'Semantic Fail', color: '#a855f7', bg: 'rgba(168,85,247,0.10)' },
     interrupted:    { label: 'Interrupted',   color: '#f59e0b', bg: 'rgba(245,158,11,0.10)' },
     degraded_input: { label: 'Degraded',      color: '#f59e0b', bg: 'rgba(245,158,11,0.10)' },
+    skipped:        { label: 'Skipped',       color: '#6b7280', bg: 'rgba(107,114,128,0.08)' },
+    retried:        { label: 'Retried',       color: '#6b7280', bg: 'rgba(107,114,128,0.08)' },
   }
   return map[status] ?? { label: status, color: '#6b7280', bg: 'rgba(107,114,128,0.08)' }
 }
