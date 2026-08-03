@@ -151,7 +151,7 @@ def check_semantic_coherence(
         if inspection.tool_failures:
             evidence_lines.append("Tool failures:")
             for tf in inspection.tool_failures:
-                evidence_lines.append(f"  - [{tf.failure_type}] {tf.message}")
+                evidence_lines.append(f"  - [{tf.failure_type}] {tf.evidence}")
 
     if evidence_lines:
         user_msg += (

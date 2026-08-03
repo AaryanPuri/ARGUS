@@ -6,6 +6,8 @@ from argus.models import SemanticSignal
 from argus.registry import get_registry, scan_value
 
 _DEFAULT_MAX_DEPTH = 10
+_DEFAULT_MAX_FIELDS = 100
+_DEFAULT_MAX_VALUE_LEN = 10_000
 _DEPTH_LIMIT_SIG_ID = "DEPTH-LIMIT"
 
 
@@ -24,12 +26,18 @@ class HeuristicEngine:
         self,
         registry: list[dict[str, Any]] | None = None,
         max_depth: int = _DEFAULT_MAX_DEPTH,
+        max_fields: int = _DEFAULT_MAX_FIELDS,
+        max_value_len: int = _DEFAULT_MAX_VALUE_LEN,
     ) -> None:
         self._registry = registry if registry is not None else get_registry()
         self._max_depth = max_depth
+        self._max_fields = max_fields
+        self._max_value_len = max_value_len
+        self._field_count = 0
 
     def scan(self, value: Any, root_key: str = "output") -> list[SemanticSignal]:
         """Recursively scan value starting at root_key as the first path segment."""
+        self._field_count = 0
         seen: set[tuple[str, tuple[str, ...]]] = set()
         signals: list[SemanticSignal] = []
         self._scan_node(value, path=(root_key,), depth=0, signals=signals, seen=seen)
@@ -60,25 +68,29 @@ class HeuristicEngine:
             return
 
         if isinstance(value, str):
-            for match in scan_value(value, self._registry):
-                dedup_key = (match.sig_id, path)
-                if dedup_key not in seen:
-                    seen.add(dedup_key)
-                    signals.append(
-                        SemanticSignal(
-                            sig_id=match.sig_id,
-                            category=match.category,
-                            severity=match.severity,
-                            description=match.description,
-                            field_path=path,
-                            evidence=match.evidence,
-                            confidence=match.confidence,
+            if len(value) <= self._max_value_len:
+                for match in scan_value(value, self._registry):
+                    dedup_key = (match.sig_id, path)
+                    if dedup_key not in seen:
+                        seen.add(dedup_key)
+                        signals.append(
+                            SemanticSignal(
+                                sig_id=match.sig_id,
+                                category=match.category,
+                                severity=match.severity,
+                                description=match.description,
+                                field_path=path,
+                                evidence=match.evidence,
+                                confidence=match.confidence,
+                            )
                         )
-                    )
             return  # strings are leaf nodes — no further descent
 
         if isinstance(value, dict):
             for k, v in value.items():
+                self._field_count += 1
+                if self._field_count > self._max_fields:
+                    return
                 self._scan_node(v, (*path, k), depth + 1, signals, seen)
             return
 
@@ -103,8 +115,12 @@ def scan_execution_output(
     Normalize SDK-specific outputs to a plain dict before calling this.
     """
     engine = HeuristicEngine(max_depth=max_depth)
+    engine._field_count = 0
     seen: set[tuple[str, tuple[str, ...]]] = set()
     signals: list[SemanticSignal] = []
     for key, value in output_dict.items():
+        engine._field_count += 1
+        if engine._field_count > engine._max_fields:
+            break
         engine._scan_node(value, path=(key,), depth=0, signals=signals, seen=seen)
     return signals

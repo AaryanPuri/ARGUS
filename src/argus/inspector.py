@@ -558,7 +558,13 @@ def inspect_tool_outputs(
                 if not isinstance(value, str) or len(value) < 80:
                     continue
                 for in_key, in_val in input_str_fields:
-                    ratio = SequenceMatcher(None, value, in_val, autojunk=False).ratio()
+                    if max(len(value), len(in_val)) > 5000:
+                        ratio = 1.0 if value == in_val else (
+                            1.0 - abs(len(value) - len(in_val)) / max(len(value), len(in_val))
+                            if value[:500] == in_val[:500] else 0.0
+                        )
+                    else:
+                        ratio = SequenceMatcher(None, value, in_val, autojunk=False).ratio()
                     if ratio >= 0.90:
                         _add(
                             ToolFailure(

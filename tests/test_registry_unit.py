@@ -1,0 +1,212 @@
+"""Unit tests for argus.registry — signature matching strategies."""
+import pytest
+from argus.registry import scan_value, get_registry, _match_exact_ci, _match_contains_ci, _match_prefix_ci, _match_repetition
+
+@pytest.fixture(autouse=True)
+def _isolate(tmp_path, monkeypatch):
+    monkeypatch.chdir(tmp_path)
+
+def _make_sig(sid, pattern, strategy, category="placeholder_outputs", severity="warning"):
+    sig = {
+        "id": sid, "pattern": pattern, "match_strategy": strategy,
+        "category": category, "severity": severity,
+        "description": f"test sig {sid}",
+    }
+    if strategy == "regex":
+        import re
+        sig["_compiled"] = re.compile(pattern, re.IGNORECASE)
+    return sig
+
+@pytest.mark.unit
+class TestExactCI:
+    def test_exact_match(self):
+        assert _match_exact_ci("N/A", "N/A") == (True, 1.0)
+
+    def test_case_insensitive(self):
+        assert _match_exact_ci("n/a", "N/A") == (True, 1.0)
+
+    def test_whitespace_stripped(self):
+        assert _match_exact_ci("N/A", "  N/A  ") == (True, 1.0)
+
+    def test_no_match(self):
+        assert _match_exact_ci("N/A", "Not applicable")[0] is False
+
+@pytest.mark.unit
+class TestContainsCI:
+    def test_substring_match(self):
+        matched, conf = _match_contains_ci("placeholder", "This is a placeholder value")
+        assert matched is True
+        assert 0 < conf <= 0.95
+
+    def test_confidence_scales_with_ratio(self):
+        _, short_conf = _match_contains_ci("placeholder text", "placeholder text")
+        _, long_conf = _match_contains_ci("placeholder text", "x" * 200 + "placeholder text" + "x" * 200)
+        assert short_conf >= long_conf
+
+@pytest.mark.unit
+class TestRegex:
+    def test_regex_match(self):
+        sig = _make_sig("T-003", r"\d{3}-\d{4}", "regex")
+        matches = scan_value("Call 555-1234 now", [sig])
+        assert len(matches) == 1
+
+    def test_critical_regex_high_confidence(self):
+        sig = _make_sig("T-003", r"error", "regex", severity="critical")
+        matches = scan_value("an error occurred", [sig])
+        assert len(matches) == 1
+        assert matches[0].confidence == 0.9
+
+    def test_non_critical_regex_lower_confidence(self):
+        sig = _make_sig("T-003", r"warning", "regex", severity="warning")
+        matches = scan_value("a warning was issued", [sig])
+        assert len(matches) == 1
+        assert matches[0].confidence == 0.7
+
+@pytest.mark.unit
+class TestPrefixCI:
+    def test_prefix_match(self):
+        matched, conf = _match_prefix_ci("error:", "Error: something went wrong")
+        assert matched is True
+
+    def test_short_string_higher_confidence(self):
+        _, short_conf = _match_prefix_ci("err", "Error")
+        _, long_conf = _match_prefix_ci("err", "Error in the analysis of the complex data structure that was provided to the system")
+        assert short_conf > long_conf
+
+@pytest.mark.unit
+class TestRepetition:
+    def test_repetitive_text_detected(self):
+        text = " ".join(["hello world"] * 20)
+        matched, conf = _match_repetition(text)
+        assert matched is True
+
+    def test_normal_text_no_match(self):
+        text = "The quick brown fox jumps over the lazy dog. Each word is unique in this longer sentence."
+        matched, _ = _match_repetition(text)
+        assert matched is False
+
+    def test_short_text_no_match(self):
+        matched, _ = _match_repetition("hi")
+        assert matched is False
+
+@pytest.mark.unit
+class TestCriticalShortCircuit:
+    def test_stops_after_critical(self):
+        sigs = [
+            _make_sig("T-001", "FAIL", "exact_ci", severity="critical"),
+            _make_sig("T-002", "fail", "contains_ci", severity="warning"),
+        ]
+        matches = scan_value("FAIL", sigs)
+        assert len(matches) == 1
+        assert matches[0].sig_id == "T-001"
+
+@pytest.mark.unit
+class TestScanValueFullRegistry:
+    def test_registry_loads(self):
+        reg = get_registry()
+        assert len(reg) > 0
+        categories = {s.get("category") for s in reg}
+        assert "placeholder_outputs" in categories
+
+    def test_normal_text_no_signals(self):
+        matches = scan_value(
+            "Tesla stock rose 5.3% today on strong Q3 earnings, "
+            "beating analyst expectations by $0.12 per share.",
+        )
+        assert len(matches) == 0
+
+    def test_placeholder_text_detected(self):
+        matches = scan_value("PLACEHOLDER")
+        assert any(m.sig_id.startswith("PH-") for m in matches)
+
+
+@pytest.mark.unit
+class TestCustomSignatures:
+    def test_custom_signatures_loaded(self, tmp_path, monkeypatch):
+        """Custom signatures from .argus/custom_signatures.json are appended."""
+        import json
+        from argus.registry import _load_registry
+
+        monkeypatch.chdir(tmp_path)
+        custom_dir = tmp_path / ".argus"
+        custom_dir.mkdir(exist_ok=True)
+        custom_sigs = {
+            "signatures": [
+                {
+                    "id": "CUSTOM-001",
+                    "pattern": "CUSTOM_PLACEHOLDER",
+                    "match_strategy": "exact_ci",
+                    "category": "placeholder_outputs",
+                    "severity": "critical",
+                    "description": "custom test sig",
+                }
+            ]
+        }
+        (custom_dir / "custom_signatures.json").write_text(json.dumps(custom_sigs))
+
+        registry = _load_registry()
+        custom_ids = [s["id"] for s in registry if s["id"] == "CUSTOM-001"]
+        assert len(custom_ids) == 1
+
+    def test_disabled_custom_signature_skipped(self, tmp_path, monkeypatch):
+        import json
+        from argus.registry import _load_registry
+
+        monkeypatch.chdir(tmp_path)
+        custom_dir = tmp_path / ".argus"
+        custom_dir.mkdir(exist_ok=True)
+        custom_sigs = {
+            "signatures": [
+                {
+                    "id": "CUSTOM-002",
+                    "pattern": "DISABLED_SIG",
+                    "match_strategy": "exact_ci",
+                    "category": "placeholder_outputs",
+                    "severity": "warning",
+                    "description": "disabled sig",
+                    "metadata": {"disabled": True},
+                }
+            ]
+        }
+        (custom_dir / "custom_signatures.json").write_text(json.dumps(custom_sigs))
+
+        registry = _load_registry()
+        assert not any(s["id"] == "CUSTOM-002" for s in registry)
+
+    def test_custom_regex_compiled(self, tmp_path, monkeypatch):
+        import json, re
+        from argus.registry import _load_registry
+
+        monkeypatch.chdir(tmp_path)
+        custom_dir = tmp_path / ".argus"
+        custom_dir.mkdir(exist_ok=True)
+        custom_sigs = {
+            "signatures": [
+                {
+                    "id": "CUSTOM-003",
+                    "pattern": r"ERROR_\d+",
+                    "match_strategy": "regex",
+                    "category": "placeholder_outputs",
+                    "severity": "critical",
+                    "description": "regex test",
+                }
+            ]
+        }
+        (custom_dir / "custom_signatures.json").write_text(json.dumps(custom_sigs))
+
+        registry = _load_registry()
+        custom = [s for s in registry if s["id"] == "CUSTOM-003"]
+        assert len(custom) == 1
+        assert "_compiled" in custom[0]
+        assert custom[0]["_compiled"].match("ERROR_42")
+
+    def test_malformed_custom_file_ignored(self, tmp_path, monkeypatch):
+        from argus.registry import _load_registry
+
+        monkeypatch.chdir(tmp_path)
+        custom_dir = tmp_path / ".argus"
+        custom_dir.mkdir(exist_ok=True)
+        (custom_dir / "custom_signatures.json").write_text("not json{{{")
+
+        registry = _load_registry()
+        assert len(registry) > 0

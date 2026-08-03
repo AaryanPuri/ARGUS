@@ -187,6 +187,7 @@ class ArgusWatcher:
                 enabled=True,
                 always_investigate=always,
                 model=cfg.judge_model,
+                semantic_check=cfg.semantic_judge,
             )
 
         self._session = ArgusSession(
