@@ -80,7 +80,7 @@ def make_inspection(
 def make_run_record(events=None, edges=None, status="clean", run_id="test-run"):
     return RunRecord(
         run_id=run_id,
-        argus_version="0.8.10",
+        argus_version="0.8.11",
         started_at=datetime.now(timezone.utc).isoformat(),
         completed_at=datetime.now(timezone.utc).isoformat(),
         duration_ms=1000.0,
