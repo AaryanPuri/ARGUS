@@ -1,16 +1,11 @@
-import pytest
 from datetime import datetime, timezone
 
+import pytest
+
 from argus.models import (
-    AnomalySignal,
-    ArgusConfig,
-    BehaviorConfig,
     InspectionResult,
     NodeEvent,
     RunRecord,
-    SemanticSignal,
-    ToolFailure,
-    ValidatorResult,
 )
 
 
@@ -19,7 +14,10 @@ def tmp_argus_dir(tmp_path, monkeypatch):
     monkeypatch.chdir(tmp_path)
     (tmp_path / ".argus" / "runs").mkdir(parents=True)
     monkeypatch.setattr("argus.llm_proxy.is_available", lambda: False)
-    monkeypatch.setattr("argus.session.ArgusSession._sync_shared_signatures", staticmethod(lambda: None))
+    monkeypatch.setattr(
+        "argus.session.ArgusSession._sync_shared_signatures",
+        staticmethod(lambda: None),
+    )
     from argus.registry import reload_registry
     reload_registry()
     return tmp_path

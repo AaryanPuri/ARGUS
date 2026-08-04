@@ -1,11 +1,14 @@
 """Stress tests and edge cases for the ARGUS detection pipeline."""
 import time
+
 import pytest
-from argus.inspector import inspect_tool_outputs, inspect_transition
-from argus.heuristic_engine import scan_execution_output
+
 from argus.anomaly_detector import detect_anomalies
+from argus.heuristic_engine import scan_execution_output
+from argus.inspector import inspect_tool_outputs, inspect_transition
 from argus.session import ArgusSession
 from argus.storage import load_run
+
 
 @pytest.fixture(autouse=True)
 def _isolate(tmp_path, monkeypatch):
@@ -18,7 +21,7 @@ class TestLargeOutputs:
     def test_1mb_dict_completes(self):
         big = {f"field_{i}": f"value_{i}" * 100 for i in range(1000)}
         t0 = time.perf_counter()
-        result = inspect_tool_outputs(big)
+        inspect_tool_outputs(big)
         elapsed = time.perf_counter() - t0
         assert elapsed < 60.0, f"Took {elapsed:.1f}s (was 1051s before fix)"
 
@@ -87,7 +90,7 @@ class TestEdgeCaseInputs:
 @pytest.mark.unit
 class TestAnomalyDetectorStress:
     def test_large_output_anomaly_detection(self):
-        big = {f"field_{i}": f"value " * 50 for i in range(100)}
+        big = {f"field_{i}": "value " * 50 for i in range(100)}
         bt, signals = detect_anomalies("node", big)
         assert bt is not None
 

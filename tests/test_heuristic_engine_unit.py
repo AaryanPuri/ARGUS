@@ -1,7 +1,8 @@
 """Unit tests for argus.heuristic_engine — recursive semantic scanner."""
 import pytest
+
 from argus.heuristic_engine import HeuristicEngine, scan_execution_output
-from argus.registry import get_registry
+
 
 @pytest.fixture(autouse=True)
 def _isolate(tmp_path, monkeypatch):

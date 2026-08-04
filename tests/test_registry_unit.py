@@ -1,6 +1,15 @@
 """Unit tests for argus.registry — signature matching strategies."""
 import pytest
-from argus.registry import scan_value, get_registry, _match_exact_ci, _match_contains_ci, _match_prefix_ci, _match_repetition
+
+from argus.registry import (
+    _match_contains_ci,
+    _match_exact_ci,
+    _match_prefix_ci,
+    _match_repetition,
+    get_registry,
+    scan_value,
+)
+
 
 @pytest.fixture(autouse=True)
 def _isolate(tmp_path, monkeypatch):
@@ -40,7 +49,8 @@ class TestContainsCI:
 
     def test_confidence_scales_with_ratio(self):
         _, short_conf = _match_contains_ci("placeholder text", "placeholder text")
-        _, long_conf = _match_contains_ci("placeholder text", "x" * 200 + "placeholder text" + "x" * 200)
+        padded = "x" * 200 + "placeholder text" + "x" * 200
+        _, long_conf = _match_contains_ci("placeholder text", padded)
         assert short_conf >= long_conf
 
 @pytest.mark.unit
@@ -70,7 +80,11 @@ class TestPrefixCI:
 
     def test_short_string_higher_confidence(self):
         _, short_conf = _match_prefix_ci("err", "Error")
-        _, long_conf = _match_prefix_ci("err", "Error in the analysis of the complex data structure that was provided to the system")
+        long_text = (
+            "Error in the analysis of the complex data"
+            " structure that was provided to the system"
+        )
+        _, long_conf = _match_prefix_ci("err", long_text)
         assert short_conf > long_conf
 
 @pytest.mark.unit
@@ -81,7 +95,10 @@ class TestRepetition:
         assert matched is True
 
     def test_normal_text_no_match(self):
-        text = "The quick brown fox jumps over the lazy dog. Each word is unique in this longer sentence."
+        text = (
+            "The quick brown fox jumps over the lazy dog."
+            " Each word is unique in this longer sentence."
+        )
         matched, _ = _match_repetition(text)
         assert matched is False
 
@@ -125,6 +142,7 @@ class TestCustomSignatures:
     def test_custom_signatures_loaded(self, tmp_path, monkeypatch):
         """Custom signatures from .argus/custom_signatures.json are appended."""
         import json
+
         from argus.registry import _load_registry
 
         monkeypatch.chdir(tmp_path)
@@ -150,6 +168,7 @@ class TestCustomSignatures:
 
     def test_disabled_custom_signature_skipped(self, tmp_path, monkeypatch):
         import json
+
         from argus.registry import _load_registry
 
         monkeypatch.chdir(tmp_path)
@@ -174,7 +193,8 @@ class TestCustomSignatures:
         assert not any(s["id"] == "CUSTOM-002" for s in registry)
 
     def test_custom_regex_compiled(self, tmp_path, monkeypatch):
-        import json, re
+        import json
+
         from argus.registry import _load_registry
 
         monkeypatch.chdir(tmp_path)

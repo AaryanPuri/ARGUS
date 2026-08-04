@@ -1,13 +1,22 @@
 """Unit tests for argus.anomaly_detector — all 8 behavioral anomaly checks."""
 import pytest
+
 from argus.anomaly_detector import (
-    detect_anomalies, infer_behavior_type, resolve_behavior_type,
-    _check_length_collapse, _check_repetitive_filler, _check_info_density,
-    _check_generic_response, _check_structural_malformation,
-    _check_shallow_empty, _check_incomplete_reasoning, _check_abnormal_tool_response,
     BEHAVIOR_PROFILES,
+    _check_abnormal_tool_response,
+    _check_generic_response,
+    _check_incomplete_reasoning,
+    _check_info_density,
+    _check_length_collapse,
+    _check_repetitive_filler,
+    _check_shallow_empty,
+    _check_structural_malformation,
+    detect_anomalies,
+    infer_behavior_type,
+    resolve_behavior_type,
 )
 from argus.models import BehaviorConfig
+
 
 @pytest.fixture(autouse=True)
 def _isolate(tmp_path, monkeypatch):

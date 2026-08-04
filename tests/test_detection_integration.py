@@ -1,10 +1,13 @@
 """Integration tests — full detection pipeline via ArgusSession."""
 import asyncio
-import pytest
 from concurrent.futures import ThreadPoolExecutor
-from argus.session import ArgusSession
+
+import pytest
+
 from argus.models import LLMInvestigationConfig
+from argus.session import ArgusSession
 from argus.storage import load_run
+
 
 @pytest.fixture(autouse=True)
 def _isolate(tmp_path, monkeypatch):
@@ -23,8 +26,20 @@ class TestCleanPipeline:
         session.set_edges({"fetch": ["analyze"], "analyze": ["summarize"]})
 
         fetch = session.wrap("fetch", lambda s: {"data": [1, 2, 3]})
-        analyze = session.wrap("analyze", lambda s: {"analysis": "The quarterly revenue analysis shows a 15% increase in recurring subscriptions across all segments"})
-        summarize = session.wrap("summarize", lambda s: {"summary": "Revenue grew 15% quarter over quarter driven primarily by enterprise subscription renewals and new mid-market deals"})
+        _analysis = (
+            "The quarterly revenue analysis shows a 15% increase"
+            " in recurring subscriptions across all segments"
+        )
+        analyze = session.wrap(
+            "analyze", lambda s: {"analysis": _analysis},
+        )
+        _summary = (
+            "Revenue grew 15% quarter over quarter driven primarily"
+            " by enterprise subscription renewals and new deals"
+        )
+        summarize = session.wrap(
+            "summarize", lambda s: {"summary": _summary},
+        )
 
         state = {}
         state = fetch(state)
@@ -301,16 +316,25 @@ class TestLLMJudgeOverride:
         """LLM judge pass cannot override structural failures."""
         import json as _json
         monkeypatch.setattr("argus.llm_proxy.is_available", lambda: True)
-        monkeypatch.setattr("argus.llm_proxy.create_chat_completion", lambda **kw: {
-            "choices": [{"message": {"content": _json.dumps({"pass": True, "reason": "ok", "confidence": 0.95})}}],
+        _resp = {
+            "choices": [{"message": {"content": _json.dumps(
+                {"pass": True, "reason": "ok", "confidence": 0.95},
+            )}}],
             "usage": {"prompt_tokens": 10, "completion_tokens": 5},
-        })
+        }
+        monkeypatch.setattr(
+            "argus.llm_proxy.create_chat_completion", lambda **kw: _resp,
+        )
 
         session = ArgusSession(
-            llm_investigation=LLMInvestigationConfig(enabled=True, semantic_check=True),
+            llm_investigation=LLMInvestigationConfig(
+                enabled=True, semantic_check=True,
+            ),
         )
         session.set_node_names(["bad"])
-        wrapped = session.wrap("bad", lambda s: {"error": "fail", "results": []})
+        wrapped = session.wrap(
+            "bad", lambda s: {"error": "fail", "results": []},
+        )
         wrapped({})
         session.finalize()
 
@@ -321,10 +345,15 @@ class TestLLMJudgeOverride:
         """LLM judge pass CAN override ambiguous heuristic-only failures."""
         import json as _json
         monkeypatch.setattr("argus.llm_proxy.is_available", lambda: True)
-        monkeypatch.setattr("argus.llm_proxy.create_chat_completion", lambda **kw: {
-            "choices": [{"message": {"content": _json.dumps({"pass": True, "reason": "looks fine", "confidence": 0.95})}}],
+        _resp = {
+            "choices": [{"message": {"content": _json.dumps(
+                {"pass": True, "reason": "looks fine", "confidence": 0.95},
+            )}}],
             "usage": {"prompt_tokens": 10, "completion_tokens": 5},
-        })
+        }
+        monkeypatch.setattr(
+            "argus.llm_proxy.create_chat_completion", lambda **kw: _resp,
+        )
 
         session = ArgusSession(
             llm_investigation=LLMInvestigationConfig(enabled=True, semantic_check=True),

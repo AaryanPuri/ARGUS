@@ -1,11 +1,18 @@
 """Unit tests for argus.correlator — cross-node failure correlation."""
-import pytest
-from argus.correlator import correlate, _find_degradation_origins, _node_signal_weight
-from argus.models import (
-    NodeEvent, InspectionResult, RunRecord, ToolFailure,
-    SemanticSignal, AnomalySignal, BehaviorConfig,
-)
 from datetime import datetime, timezone
+
+import pytest
+
+from argus.correlator import _node_signal_weight, correlate
+from argus.models import (
+    AnomalySignal,
+    InspectionResult,
+    NodeEvent,
+    RunRecord,
+    SemanticSignal,
+    ToolFailure,
+)
+
 
 @pytest.fixture(autouse=True)
 def _isolate(tmp_path, monkeypatch):
@@ -219,5 +226,5 @@ class TestAnomalyCascade:
         all_links = []
         for chain in report.propagation_chains:
             all_links.extend(chain.links)
-        cascade_links = [l for l in all_links if l.signal_type == "anomaly_cascade"]
+        cascade_links = [lk for lk in all_links if lk.signal_type == "anomaly_cascade"]
         assert len(cascade_links) >= 1

@@ -1,10 +1,9 @@
 """Unit tests for argus.inspector — all 16 detection rules + structural inspection."""
 import pytest
+from conftest import make_event, make_inspection
 
 from argus.inspector import build_root_cause_chain, inspect_tool_outputs, inspect_transition
 from argus.models import SemanticSignal, ToolFailure
-from conftest import make_event, make_inspection
-
 
 # ── Rule 1: Error keys ──────────────────────────────────────────────────────
 
@@ -373,7 +372,8 @@ class TestRule12ShallowSummary:
 
     def test_short_summary_with_long_input(self):
         result = inspect_tool_outputs(
-            {"summary": "This is a summary that is about ninety chars long, which is still short.  padding"},
+            {"summary": "This is a summary that is about ninety"
+             " chars long, which is still short.  padding"},
             input_state={"document": "x" * 1000},
         )
         assert any(
@@ -711,7 +711,12 @@ class TestTypedDictIntrospection:
     def test_check_fields_with_node_provided_keys(self):
         from argus.inspector import _check_fields
 
-        expected = {"summary": {"required": True, "type": str}, "score": {"required": True, "type": int}}
+        expected = {
+            "summary": {"required": True, "type": str},
+            "score": {"required": True, "type": int},
+        }
         actual = {"summary": "hello"}
-        missing, empty, mismatches = _check_fields(expected, actual, node_provided_keys={"summary"})
+        missing, empty, mismatches = _check_fields(
+            expected, actual, node_provided_keys={"summary"},
+        )
         assert "score" not in missing

@@ -1,8 +1,11 @@
 """Unit tests for argus.semantic_checker — LLM semantic judge (all calls mocked)."""
 import json
+
 import pytest
-from argus.semantic_checker import check_semantic_coherence, _compact_dict, _truncate
-from argus.models import ValidatorResult, AnomalySignal, InspectionResult, ToolFailure
+
+from argus.models import AnomalySignal, InspectionResult, ToolFailure, ValidatorResult
+from argus.semantic_checker import _compact_dict, _truncate, check_semantic_coherence
+
 
 @pytest.fixture(autouse=True)
 def _isolate(tmp_path, monkeypatch):

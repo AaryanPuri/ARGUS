@@ -1,6 +1,8 @@
 """Document known false-positive-prone signatures in the bundled registry."""
 import pytest
-from argus.registry import scan_value, get_registry
+
+from argus.registry import get_registry, scan_value
+
 
 @pytest.fixture
 def registry():

@@ -1,8 +1,11 @@
 """Unit tests for argus.heuristic_disambiguator — LLM disambiguation (all calls mocked)."""
 import json
+
 import pytest
+
 from argus.heuristic_disambiguator import disambiguate_signals
 from argus.models import SemanticSignal
+
 
 @pytest.fixture(autouse=True)
 def _isolate(tmp_path, monkeypatch):
