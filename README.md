@@ -251,4 +251,4 @@ For AI setup prompts and integration guides, visit **[arguslabs.in](https://argu
 
 ---
 
-**v0.8.6** — [changelog](https://github.com/VaradDurge/ARGUS/releases)
+**v0.8.11** — [changelog](https://github.com/VaradDurge/ARGUS/releases)

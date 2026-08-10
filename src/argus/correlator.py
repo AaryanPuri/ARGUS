@@ -289,10 +289,10 @@ def _find_degradation_origins(
             )
         )
 
-    # Sort: highest confidence first, then prefer crashes over behavioral-only
+    # Sort: highest confidence first; demote crash sites (symptoms, not causes)
     def _origin_sort_key(o: DegradationOrigin) -> tuple[float, int]:
         ev = events_by_name.get(o.node_name)
-        is_crash = 1 if (ev and ev.status == "crashed") else 0
+        is_crash = 0 if (ev and ev.status == "crashed") else 1
         return (o.confidence, is_crash)
 
     origins.sort(key=_origin_sort_key, reverse=True)
