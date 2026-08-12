@@ -17,8 +17,45 @@ Your LangGraph pipeline runs fine — no exception. But three nodes later, somet
 ## Install
 
 ```bash
-pip install argus-agents
+pip install "argus-agents[all]"
 ```
+
+This gets the full product: the `argus` CLI, the LangGraph adapter, and AI-powered detection. ARGUS runs **fully local** — runs are stored in `.argus/runs/`, no account, no cloud, no signup. Heuristic detection (150+ signatures) works out of the box.
+
+<details>
+<summary>Installing only what you need</summary>
+
+`argus-agents` has a zero-dependency core. Pull in just the extras you use:
+
+```bash
+pip install argus-agents            # framework-agnostic library only (ArgusSession)
+pip install "argus-agents[cli]"     # + the `argus` command-line tool
+pip install "argus-agents[langgraph]"  # + the ArgusWatcher LangGraph adapter
+pip install "argus-agents[llm]"     # + OpenAI-powered semantic features
+pip install "argus-agents[all]"     # everything (recommended)
+```
+</details>
+
+## Bring Your Own Key (BYOK)
+
+AI-powered detection (the semantic judge, LLM investigator, learned trends) uses **your own** OpenAI key. Set it once and it's saved locally for every future session:
+
+```bash
+argus key set            # prompts, hidden input — saved to ~/.argus/config.json
+# or pass it directly:
+argus key set sk-...
+# or just export it:
+export OPENAI_API_KEY=sk-...
+```
+
+Resolution order: `OPENAI_API_KEY` env var → saved key → (hosted proxy, if you're on the cloud tier) → heuristic-only. Check what's active anytime:
+
+```bash
+argus key show           # masked key + where it came from
+argus doctor             # reports BYOK / hosted / heuristic-only mode
+```
+
+No key? ARGUS still works — it falls back to heuristic-only detection, no crashes.
 
 ## Getting Started (AI-Powered Setup)
 
@@ -32,13 +69,13 @@ The fastest way to set up ARGUS — let your AI assistant handle the integration
 
 **3. Copy the prompt and paste it into your AI assistant** (Claude, ChatGPT, Cursor, etc.) — it will handle the full setup for you. This is the **most important step**.
 
-**4. Log in to ARGUS**
+**4. (Optional) Log in for hosted cloud sync**
 
 ```bash
 argus login
 ```
 
-Sign in with your Google account to enable cloud sync and the dashboard.
+Signing in with Google enables **hosted** cloud sync and the shared trends registry — part of the managed/enterprise tier. It is **entirely optional**: the open-source package is fully local and needs no login. (`argus login` reports "hosted-only feature" unless a hosted backend is configured.)
 
 **5. Open the dashboard**
 
@@ -134,7 +171,7 @@ For subtle quality issues that pattern matching can't catch:
 watcher = ArgusWatcher(graph, semantic_judge=True)  # enabled by default
 ```
 
-LLM evaluates output quality on every node. Catches wrong tone, unhelpful responses, outdated info. Requires `OPENAI_API_KEY`.
+LLM evaluates output quality on every node. Catches wrong tone, unhelpful responses, outdated info. Requires an OpenAI key — set via `argus key set` or `OPENAI_API_KEY` (see [BYOK](#bring-your-own-key-byok)).
 
 The judge receives **all prior evidence** — validator failures, anomaly signals, inspection results — so it rules with full context, not just input/output. Every decision includes an audit trail:
 
@@ -196,8 +233,11 @@ argus replay <id> <node>             # re-run from a node
 argus diff <id-a> <id-b>             # compare two runs
 argus stats                          # signature hit stats, disable/enable/dispute signatures
 argus ui                             # web dashboard
-argus doctor                         # check setup health
-argus login                          # sign in for cloud sync
+argus doctor                         # check setup health + LLM mode (BYOK/hosted/heuristic)
+argus key set                        # save your OpenAI key locally (BYOK)
+argus key show                       # show the active key (masked) and its source
+argus key clear                      # remove the saved key
+argus login                          # (optional) sign in for hosted cloud sync
 argus logout                         # clear stored credentials
 argus whoami                         # show current login status
 argus update                         # check for newer release
@@ -245,10 +285,16 @@ Works with any framework — Prefect, Temporal, plain Python.
 
 - Python 3.9+
 - LangGraph 0.2+ (only for `ArgusWatcher`)
-- `OPENAI_API_KEY` in env for semantic features (optional — all heuristic detection works without it)
+- An OpenAI key for semantic features — set via `argus key set` or `OPENAI_API_KEY` (optional; all heuristic detection works without it)
 
 For AI setup prompts and integration guides, visit **[arguslabs.in](https://arguslabs.in)**.
 
 ---
 
 **v0.8.11** — [changelog](https://github.com/VaradDurge/ARGUS/releases)
+
+## License
+
+ARGUS is **open-core**. The open-source core (`src/argus/`, the `argus-agents` PyPI
+package) is licensed under **Apache-2.0** — see [LICENSE](LICENSE). The `cloud/`
+directory (hosted/enterprise components) is proprietary — see [cloud/LICENSE](cloud/LICENSE).

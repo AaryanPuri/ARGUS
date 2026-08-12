@@ -1034,3 +1034,224 @@ def test_conditional_branch_auto_finalize():
     record = load_run(session.run_id)
     assert record is not None
     assert record.overall_status == "clean"
+
+
+@pytest.mark.unit
+def test_user_config_save_load_clear(tmp_path, monkeypatch):
+    import argus.user_config as uc
+
+    monkeypatch.setattr(uc, "_CONFIG_DIR", tmp_path / ".argus")
+    monkeypatch.setattr(uc, "_CONFIG_FILE", tmp_path / ".argus" / "config.json")
+    monkeypatch.delenv("OPENAI_API_KEY", raising=False)
+
+    assert uc.get_saved_openai_key() is None
+    uc.set_openai_key("sk-test-123")
+    assert uc.get_saved_openai_key() == "sk-test-123"
+    # file is chmod 600
+    import stat
+    mode = stat.S_IMODE((tmp_path / ".argus" / "config.json").stat().st_mode)
+    assert mode == 0o600
+    uc.clear_openai_key()
+    assert uc.get_saved_openai_key() is None
+
+
+@pytest.mark.unit
+def test_resolve_openai_key_prefers_env(tmp_path, monkeypatch):
+    import argus.user_config as uc
+
+    monkeypatch.setattr(uc, "_CONFIG_DIR", tmp_path / ".argus")
+    monkeypatch.setattr(uc, "_CONFIG_FILE", tmp_path / ".argus" / "config.json")
+    uc.set_openai_key("sk-saved")
+    monkeypatch.setenv("OPENAI_API_KEY", "sk-env")
+    assert uc.resolve_openai_key() == "sk-env"
+    monkeypatch.delenv("OPENAI_API_KEY", raising=False)
+    assert uc.resolve_openai_key() == "sk-saved"
+
+
+@pytest.mark.unit
+def test_llm_proxy_uses_byok_when_key_present(monkeypatch):
+    import argus.llm_proxy as lp
+
+    captured = {}
+
+    def fake_direct(*, api_key, model, messages, max_tokens, temperature,
+                    response_format, timeout):
+        captured["api_key"] = api_key
+        captured["model"] = model
+        return {"choices": [{"message": {"content": "ok"}}]}
+
+    monkeypatch.setattr(lp, "_call_openai_direct", fake_direct)
+    monkeypatch.setattr(lp, "resolve_openai_key", lambda: "sk-byok")
+
+    out = lp.create_chat_completion(
+        model="gpt-4o-mini", messages=[{"role": "user", "content": "hi"}]
+    )
+    assert "error" not in out
+    assert captured["api_key"] == "sk-byok"
+    assert captured["model"] == "gpt-4o-mini"
+
+
+@pytest.mark.unit
+def test_llm_proxy_errors_when_no_key_and_no_proxy(monkeypatch):
+    import argus.llm_proxy as lp
+
+    monkeypatch.setattr(lp, "resolve_openai_key", lambda: None)
+    monkeypatch.setattr(lp, "SUPABASE_URL", None)
+
+    out = lp.create_chat_completion(
+        model="gpt-4o-mini", messages=[{"role": "user", "content": "hi"}]
+    )
+    assert "error" in out
+
+
+@pytest.mark.unit
+def test_llm_proxy_is_available_true_with_byok(monkeypatch):
+    import importlib
+
+    import argus.llm_proxy as lp
+
+    # conftest's autouse fixture stubs is_available to always return False
+    # for test isolation elsewhere; reload restores the real implementation
+    # for this test only.
+    importlib.reload(lp)
+    monkeypatch.setattr(lp, "resolve_openai_key", lambda: "sk-byok")
+    assert lp.is_available() is True
+
+
+@pytest.mark.unit
+def test_cloud_no_hardcoded_supabase_url():
+    import inspect
+
+    import argus.cloud as cloud
+
+    src = inspect.getsource(cloud)
+    assert "isnphpbckxfjsxllryrg" not in src  # real project ref must be gone
+
+
+@pytest.mark.unit
+def test_cloud_noops_when_unconfigured(monkeypatch):
+    import argus.cloud as cloud
+
+    monkeypatch.setattr(cloud, "SUPABASE_URL", None)
+    monkeypatch.setattr(cloud, "SUPABASE_ANON_KEY", None)
+    assert cloud.is_logged_in() is False
+    assert cloud.push_run({"run_id": "x"}) is False
+    assert cloud.pull_shared_signatures() == []
+
+
+@pytest.mark.unit
+def test_login_reports_hosted_only_when_unconfigured(monkeypatch, capsys):
+    import argus.cli.cmd_login as cl
+
+    monkeypatch.setattr(cl, "SUPABASE_URL", None)
+    cl.login()
+    out = capsys.readouterr().out.lower()
+    assert "hosted" in out or "not available" in out
+
+
+@pytest.mark.unit
+def test_cmd_key_set_show_clear(tmp_path, monkeypatch, capsys):
+    import argus.cli.cmd_key as ck
+    import argus.user_config as uc
+
+    monkeypatch.setattr(uc, "_CONFIG_DIR", tmp_path / ".argus")
+    monkeypatch.setattr(uc, "_CONFIG_FILE", tmp_path / ".argus" / "config.json")
+    monkeypatch.delenv("OPENAI_API_KEY", raising=False)
+
+    ck.key_set("sk-abcdef123456")
+    assert uc.get_saved_openai_key() == "sk-abcdef123456"
+
+    ck.key_show()
+    out = capsys.readouterr().out
+    assert "sk-abcdef123456" not in out  # masked
+    assert "3456" in out  # last 4 shown
+
+    ck.key_clear()
+    assert uc.get_saved_openai_key() is None
+
+
+@pytest.mark.unit
+def test_embedding_client_uses_resolved_key(monkeypatch):
+    import argus.embedding_store as es
+
+    captured = {}
+
+    class FakeOpenAI:
+        def __init__(self, api_key=None):
+            captured["api_key"] = api_key
+
+    monkeypatch.setattr(es, "_client", None)
+    monkeypatch.setattr("argus.user_config.resolve_openai_key", lambda: "sk-embed")
+    import sys
+    import types
+    fake_mod = types.ModuleType("openai")
+    fake_mod.OpenAI = FakeOpenAI
+    monkeypatch.setitem(sys.modules, "openai", fake_mod)
+
+    es._get_client()
+    assert captured["api_key"] == "sk-embed"
+
+
+@pytest.mark.unit
+def test_doctor_llm_mode_byok(monkeypatch):
+    import argus.cli.cmd_doctor as d
+    monkeypatch.setattr("argus.user_config.resolve_openai_key", lambda: "sk-x")
+    monkeypatch.setenv("OPENAI_API_KEY", "sk-x")
+    ok, msg = d._check_llm_mode()
+    assert ok is True
+    assert "BYOK" in msg
+
+
+@pytest.mark.unit
+def test_doctor_llm_mode_heuristic(monkeypatch):
+    import argus.cli.cmd_doctor as d
+    monkeypatch.setattr("argus.user_config.resolve_openai_key", lambda: None)
+    monkeypatch.setattr("argus.cloud.SUPABASE_URL", None)
+    ok, msg = d._check_llm_mode()
+    assert "heuristic" in msg.lower()
+
+
+@pytest.mark.unit
+def test_cli_key_set_accepts_positional_value(tmp_path, monkeypatch):
+    """Regression: `argus key set <value>` must register VALUE as a positional
+    argument (not a --value option), so the key is actually persisted."""
+    from typer.testing import CliRunner
+
+    import argus.user_config as uc
+    from argus.cli.main import app
+
+    monkeypatch.setattr(uc, "_CONFIG_DIR", tmp_path / ".argus")
+    monkeypatch.setattr(uc, "_CONFIG_FILE", tmp_path / ".argus" / "config.json")
+    monkeypatch.delenv("OPENAI_API_KEY", raising=False)
+
+    result = CliRunner().invoke(app, ["key", "set", "sk-positional-123456"])
+    assert result.exit_code == 0, result.output
+    assert uc.get_saved_openai_key() == "sk-positional-123456"
+
+
+@pytest.mark.unit
+def test_approve_shared_falls_back_to_local_when_no_cloud(tmp_path, monkeypatch):
+    """OSS/local-only: approving a trend for 'sharing' with no Supabase configured
+    must store it locally (no public/private split), not silently fail."""
+    monkeypatch.chdir(tmp_path)
+    (tmp_path / ".argus").mkdir(exist_ok=True)
+    import argus.cloud as cloud
+    monkeypatch.setattr(cloud, "SUPABASE_URL", None)
+
+    import argus.candidate_store as cs
+    from argus.models import SuggestedSignature
+
+    sig = SuggestedSignature(
+        pattern="placeholder local fallback test",
+        match_strategy="contains_ci",
+        proposed_category="placeholder_outputs",
+        severity="high",
+        description="d",
+        evidence=("e",),
+        confidence=0.9,
+        reasoning="r",
+    )
+    cid = cs.add_candidate(sig, "run-1")
+    res = cs.approve_candidate_shared(cid)
+    assert res is not None  # did not fail
+    assert (tmp_path / ".argus" / "custom_signatures.json").exists()  # stored locally
