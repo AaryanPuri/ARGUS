@@ -433,6 +433,69 @@ def _print_chain(chain: list[RunRecord]) -> None:
     console.print()
 
 
+def _failing_iterations(record: RunRecord, node_name: str) -> list[int]:
+    """1-based iteration numbers on which *node_name* originated a failure."""
+    iters: list[int] = []
+    for e in record.steps:
+        if e.node_name != node_name:
+            continue
+        failed = e.status in ("fail", "semantic_fail") or (
+            e.inspection is not None and e.inspection.is_silent_failure
+        )
+        if failed:
+            iters.append(e.attempt_index + 1)
+    return iters
+
+
+def _root_cause_chain_str(record: RunRecord) -> str:
+    """Render the root cause chain, annotating the failing iteration on cyclic runs.
+
+    Acyclic runs keep the plain ``a  →  b`` form. On a cyclic run a culprit is
+    shown with the iteration(s) it broke on — e.g. ``gen (iteration 2)`` — so a
+    node that passed early then failed later isn't indistinguishable from one
+    that failed from the start (VAR-105).
+    """
+    if not record.is_cyclic:
+        return "  →  ".join(record.root_cause_chain)
+
+    parts: list[str] = []
+    seen: set[str] = set()
+    for name in record.root_cause_chain:
+        if name in seen:
+            continue  # collapse per-attempt duplicates; iterations shown inline
+        seen.add(name)
+        iters = _failing_iterations(record, name)
+        if iters:
+            label = "iteration" if len(iters) == 1 else "iterations"
+            parts.append(f"{name} ({label} {', '.join(str(i) for i in iters)})")
+        else:
+            parts.append(name)
+    return "  →  ".join(parts)
+
+
+def _print_coverage_line(record: RunRecord) -> None:
+    """Show how much of the run each detection layer actually evaluated.
+
+    Makes "checked, clean" distinguishable from "never checked" at a glance —
+    a layer under 100% is dimmed yellow so silent gaps don't read as green.
+    """
+    cov = getattr(record, "coverage_summary", None)
+    if not cov:
+        return
+    order = ["structural", "heuristic", "judge"]
+    parts: list[str] = []
+    for key in order:
+        if key not in cov:
+            continue
+        pct = cov[key]
+        style = "dim" if pct >= 1.0 else "yellow"
+        parts.append(f"[{style}]{key} {pct:.0%}[/{style}]")
+    if not parts:
+        return
+    line = Text.from_markup("  [dim]coverage[/dim]  " + "  [dim]·[/dim]  ".join(parts))
+    console.print(line)
+
+
 def _print_run(record: RunRecord) -> None:
     dur = f"{record.duration_ms:.0f} ms" if record.duration_ms is not None else "—"
     started = (record.started_at or "")[:16].replace("T", "  ")
@@ -451,6 +514,8 @@ def _print_run(record: RunRecord) -> None:
     status_line.append_text(Text.from_markup(f"  {dot}  "))
     status_line.append(record.overall_status, style=status_style)
     console.print(status_line)
+
+    _print_coverage_line(record)
 
     if record.parent_run_id:
         console.print(
@@ -490,7 +555,7 @@ def _print_run(record: RunRecord) -> None:
     if record.root_cause_chain:
         console.print()
         console.print(Rule(style="dim"))
-        chain_str = "  →  ".join(record.root_cause_chain)
+        chain_str = _root_cause_chain_str(record)
         rc = Text()
         rc.append("  root cause  ", style="italic dim")
         rc.append(chain_str, style="bold red")
@@ -785,6 +850,8 @@ def _print_cycle_group(
                 and (
                     event.inspection.empty_fields
                     or event.inspection.type_mismatches
+                    or event.inspection.unannotated_successors
+                    or event.inspection.suspicious_empty_keys
                     or (event.inspection.tool_failures and not event.inspection.has_tool_failure)
                 )
             )
@@ -865,6 +932,8 @@ def _print_parallel_group(
             and (
                 event.inspection.empty_fields
                 or event.inspection.type_mismatches
+                or event.inspection.unannotated_successors
+                or event.inspection.suspicious_empty_keys
                 or (event.inspection.tool_failures and not event.inspection.has_tool_failure)
             )
         )
@@ -926,7 +995,12 @@ def _print_signals(event: NodeEvent, indent: str) -> None:
     """Print anomaly signals + semantic check reason for any flagged node."""
     # Semantic check verdict (if failed or low confidence)
     sc = event.semantic_check
-    if sc and (not sc.passed or sc.confidence < 0.5):
+    if sc and not sc.evaluated:
+        console.print(
+            f"  {indent}[dim]└─[/dim]  "
+            f"[dim]semantic judge — not evaluated[/dim]  [italic dim]{sc.reason}[/italic dim]"
+        )
+    elif sc and (not sc.passed or sc.confidence < 0.5):
         conf = f"{sc.confidence:.0%}"
         console.print(
             f"  {indent}[dim]└─[/dim]  "

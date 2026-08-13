@@ -170,6 +170,49 @@ def _merge_candidate(
             break
 
 
+def _compute_coverage_summary(
+    events: list[Any],
+    graph_node_names: list[str],
+) -> dict[str, float]:
+    """Fraction of the run each detection layer actually evaluated, 0.0–1.0.
+
+    Distinguishes "checked, clean" from "never checked" (VAR-103). A layer is
+    omitted from the result when it attempted nothing (e.g. the judge never ran
+    on any node), rather than reported as 0% or a misleading 100%.
+    """
+    from argus.registry import heuristic_coverage  # noqa: PLC0415
+
+    summary: dict[str, float] = {}
+
+    # Structural: nodes whose transition could not be checked because every
+    # successor they feed lacked a field-typed schema.
+    # ponytail: node-level approximation — a node with *some* annotated
+    # successors still counts as covered. Refining needs InspectionResult to
+    # expose annotated_count (VAR-104 expensive half), out of scope here.
+    node_set = set(graph_node_names)
+    total_nodes = len(node_set) or len({e.node_name for e in events})
+    if total_nodes:
+        unannotated: set[str] = set()
+        for e in events:
+            insp = getattr(e, "inspection", None)
+            if insp is not None and insp.unannotated_successors:
+                unannotated.update(insp.unannotated_successors)
+        blind = unannotated & node_set if node_set else unannotated
+        summary["structural"] = round(1.0 - len(blind) / total_nodes, 4)
+
+    # Heuristic: fraction of registry signatures actually usable this run.
+    summary["heuristic"] = heuristic_coverage()
+
+    # Judge: fraction of judged nodes that were actually evaluated (vs skipped
+    # on error/timeout/not-logged-in). Only reported if the judge ran at all.
+    judged = [e for e in events if getattr(e, "semantic_check", None) is not None]
+    if judged:
+        evaluated = sum(1 for e in judged if e.semantic_check.evaluated)
+        summary["judge"] = round(evaluated / len(judged), 4)
+
+    return summary
+
+
 class ArgusSession:
     """Framework-agnostic monitoring session.
 
@@ -704,6 +747,7 @@ class ArgusSession:
                     # failed, this node's failures are a symptom, not cause.
                     degraded_fields, upstream_node = self._check_degraded_input(
                         input_snap,
+                        current_node=node_name,
                     )
                     if degraded_fields:
                         status = "degraded_input"
@@ -718,6 +762,7 @@ class ArgusSession:
                     # from upstream (e.g. empty fields that weren't flagged)
                     degraded_fields, upstream_node = self._check_degraded_input(
                         input_snap,
+                        current_node=node_name,
                     )
                     if degraded_fields:
                         status = "degraded_input"
@@ -1000,16 +1045,25 @@ class ArgusSession:
     def _check_degraded_input(
         self,
         input_snap: dict[str, Any],
+        current_node: str | None = None,
     ) -> tuple[list[str], str | None]:
         """Check if any upstream node failed and left fields missing from input.
 
         Returns (degraded_fields, upstream_node_name) or ([], None).
         Evidence-based: only flags fields that a failed upstream node explicitly
         reported as missing AND are also absent/empty in this node's input.
+
+        A node's OWN earlier iterations are never treated as upstream: in a
+        cyclic graph a node re-running and failing again is originating a fresh
+        failure, not inheriting degradation from itself. Blaming the earlier
+        iteration would demote every repeat failure to ``degraded_input`` and
+        hide which iteration actually broke (VAR-105).
         """
         for event in self._events:
             if event.status != "fail" or event.inspection is None:
                 continue
+            if current_node is not None and event.node_name == current_node:
+                continue  # own prior iteration is not upstream degradation
             missing_from_upstream = event.inspection.missing_fields
             if not missing_from_upstream:
                 continue
@@ -1127,6 +1181,11 @@ class ArgusSession:
             self.graph_edge_map,
         )
 
+        coverage_summary = _compute_coverage_summary(
+            events_snapshot,
+            self.graph_node_names,
+        )
+
         # aggregate LLM metrics
         total_llm_calls = sum(len(e.llm_usage.calls) for e in events_snapshot if e.llm_usage)
         total_tokens = sum(e.llm_usage.total_tokens for e in events_snapshot if e.llm_usage)
@@ -1166,6 +1225,7 @@ class ArgusSession:
             total_cost_usd=total_cost_usd,
             behavior_config=self._behavior_config,
             dry_run=self._dry_run,
+            coverage_summary=coverage_summary,
         )
 
         # Load parent run once if this is a replay (reused by correlation + comparison)
