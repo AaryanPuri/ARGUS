@@ -10,7 +10,8 @@ try:
 except ImportError:
     print(
         "argus CLI requires typer and rich.\n"
-        "Install with: pip install argus-agents[cli]  (or argus-agents[all])",
+        "Install with: pip install argus-agents\n"
+        "The PyPI package is 'argus-agents', not 'argus'.",
         file=sys.stderr,
     )
     raise SystemExit(1)

@@ -58,7 +58,7 @@ def _check_langgraph() -> tuple[bool, str]:
             pass  # can't parse version, assume OK
         return True, f"langgraph {version}"
     except ImportError:
-        return False, "langgraph not installed — run: pip install langgraph>=0.2.0"
+        return False, "langgraph not installed — run: pip install argus-agents"
     except Exception as e:
         return False, f"langgraph import error: {e}"
 
@@ -145,18 +145,24 @@ def _check_replay_readiness() -> tuple[bool, str]:
     return True, f"all {importable} node functions importable for replay"
 
 
+def _check_package_identity() -> tuple[bool, str]:
+    """Warn if the unrelated PyPI package named ``argus`` is installed."""
+    import importlib.metadata as md
+
+    try:
+        md.distribution("argus")
+    except md.PackageNotFoundError:
+        return True, "argus-agents (not the unrelated PyPI package 'argus')"
+    return False, (
+        "unrelated PyPI package 'argus' is installed and may shadow this CLI. "
+        "Uninstall it: pip uninstall argus   then: pip install argus-agents"
+    )
+
+
 def _check_optional_deps() -> tuple[bool, str]:
     parts: list[str] = []
 
-    # langgraph (ArgusWatcher)
-    try:
-        import langgraph  # type: ignore[import]  # noqa: F401
-
-        parts.append("langgraph ✓")
-    except ImportError:
-        parts.append("langgraph ✗ (pip install argus-agents[langgraph])")
-
-    # OpenAI for LLM investigation
+    # OpenAI for LLM investigation (optional extra)
     try:
         import openai  # type: ignore[import]  # noqa: F401
 
@@ -216,6 +222,7 @@ def doctor() -> None:
 
     checks = [
         ("python", _check_python_version),
+        ("package", _check_package_identity),
         ("langgraph", _check_langgraph),
         ("storage", _check_storage),
         ("llm", _check_llm_mode),

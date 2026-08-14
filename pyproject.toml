@@ -19,9 +19,15 @@ classifiers = [
     "Topic :: Software Development :: Testing",
     "Typing :: Typed",
 ]
-dependencies = []
+dependencies = [
+    "typer>=0.12.0",
+    "rich>=13.0.0",
+    "langgraph>=0.2.0",
+]
 
 [project.optional-dependencies]
+# [cli] and [langgraph] are included in the default install. Kept so older
+# `pip install argus-agents[cli]` / `[langgraph]` commands still resolve.
 cli = [
     "typer>=0.12.0",
     "rich>=13.0.0",
@@ -34,7 +40,7 @@ llm = [
     "python-dotenv>=1.0.0",
 ]
 all = [
-    "argus-agents[cli,langgraph,llm]",
+    "argus-agents[llm]",
 ]
 dev = [
     "argus-agents[all]",

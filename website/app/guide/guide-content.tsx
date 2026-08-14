@@ -58,6 +58,7 @@ If you found issues in Step 1, fix them now:
 ## STEP 3 — INTEGRATE ARGUS
 
 Install: pip install argus-agents
+(The PyPI package is argus-agents, not argus. Default install includes the CLI, LangGraph adapter, and UI. Do not add [cli] or [langgraph] extras. LLM judge is optional: pip install argus-agents[llm])
 
 Add ArgusWatcher to the file where the graph is built:
 
@@ -151,7 +152,7 @@ export default function GuideContent() {
         </p>
 
         <div className="space-y-5 mb-8">
-          <Step n={1} title="Install ARGUS" text="Run pip install argus-agents in your project." />
+          <Step n={1} title="Install ARGUS" text="Run pip install argus-agents in your project. That ships the CLI, LangGraph adapter, and UI. The package name is argus-agents, not argus." />
           <Step n={2} title="Copy the AI Setup Prompt" text="On the ARGUS landing page, click the AI Setup Prompt button (shown below). This copies a prompt that handles the full integration for you." />
         </div>
 

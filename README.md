@@ -17,23 +17,24 @@ Your LangGraph pipeline runs fine — no exception. But three nodes later, somet
 ## Install
 
 ```bash
-pip install "argus-agents[all]"
+pip install argus-agents
 ```
 
-This gets the full product: the `argus` CLI, the LangGraph adapter, and AI-powered detection. ARGUS runs **fully local** — runs are stored in `.argus/runs/`, no account, no cloud, no signup. Heuristic detection (150+ signatures) works out of the box.
+This is the full product: the `argus` CLI, the LangGraph adapter, and the local UI (`argus ui`). ARGUS runs **fully local** — runs are stored in `.argus/runs/`, no account, no cloud, no signup. Heuristic detection (150+ signatures) works out of the box.
+
+The PyPI package is **`argus-agents`**, not `argus`.
 
 <details>
-<summary>Installing only what you need</summary>
+<summary>Optional extras</summary>
 
-`argus-agents` has a zero-dependency core. Pull in just the extras you use:
+LLM-powered features (semantic judge, investigator) stay optional:
 
 ```bash
-pip install argus-agents            # framework-agnostic library only (ArgusSession)
-pip install "argus-agents[cli]"     # + the `argus` command-line tool
-pip install "argus-agents[langgraph]"  # + the ArgusWatcher LangGraph adapter
-pip install "argus-agents[llm]"     # + LLM-powered semantic features (OpenAI/Anthropic/Google)
-pip install "argus-agents[all]"     # everything (recommended)
+pip install "argus-agents[llm]"     # OpenAI client + python-dotenv for the LLM judge
+pip install "argus-agents[all]"     # same as [llm] — default product + LLM extra
 ```
+
+`[cli]` and `[langgraph]` extras still exist so older install commands keep working; both already ship in the default install.
 </details>
 
 ## Bring Your Own Key (BYOK)
