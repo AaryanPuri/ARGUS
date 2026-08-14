@@ -36,10 +36,7 @@ Find the file where my StateGraph is defined and check these things:
    def search(state: AgentState) -> dict:
        return {"results": [...]}
 
-3. GRAPH STRUCTURE: Check if the graph is:
-   - Linear (A → B → C) — auto-finalize works, no extra code needed
-   - Fan-out/fan-in (DAG) — auto-finalize works
-   - Cyclic (has loops / back-edges) — MUST call watcher.finalize() after invoke
+3. GRAPH STRUCTURE: Linear, fan-out/fan-in (DAG), and cyclic (loops / back-edges) all persist automatically after invoke() — no finalize() call needed.
 
 4. ASYNC CHECK: If node functions are async (async def), ARGUS handles both — just make sure you're using await app.ainvoke() not app.invoke().
 
@@ -64,18 +61,16 @@ Add ArgusWatcher to the file where the graph is built:
 
 from argus import ArgusWatcher
 
-watcher = ArgusWatcher(graph)          # pass StateGraph before compile()
-app = graph.compile()
-result = app.invoke(initial_state)
-watcher.finalize()                     # ALWAYS call this — required for cyclic graphs, safe for all
+watcher = ArgusWatcher()
+app = watcher.attach(graph)            # StateGraph OR already-compiled app
+result = app.invoke(initial_state)     # run persists automatically
 print(watcher.run_id)
 
-If the graph is already compiled elsewhere, use watch_compiled():
+If you prefer compiling yourself:
 
-watcher = ArgusWatcher()
-app = watcher.watch_compiled(app)
+watcher = ArgusWatcher(graph)          # uncompiled StateGraph
+app = graph.compile()
 result = app.invoke(initial_state)
-watcher.finalize()
 
 ## STEP 4 — PICK THE RIGHT CONFIG
 
@@ -101,9 +96,9 @@ watcher = ArgusWatcher(graph,
     },
 )
 
-app = graph.compile()
+app = watcher.attach(graph)
 result = app.invoke(initial_state)
-watcher.finalize()                     # persists the run to .argus/runs/
+# persisted automatically — finalize() is optional
 
 After running the pipeline:
   argus list              # see all recorded runs
@@ -431,7 +426,7 @@ export default function GuideContent() {
 
         <CodeBlock title="ArgusWatcher(graph, **kwargs)">
 {`watcher = ArgusWatcher(
-    graph,                  # your LangGraph StateGraph — auto-calls watch()
+    graph,                  # uncompiled StateGraph — or omit and call attach()
 
     # --- Output control ---
     max_field_size=50_000,  # max chars per field before truncation (default: 50k)
@@ -471,7 +466,7 @@ export default function GuideContent() {
 
 app = graph.compile()
 result = app.invoke(initial_state)
-watcher.finalize()          # ALWAYS call — persists the run to .argus/runs/`}
+# persisted automatically — or app = watcher.attach(compiled_app)`}
         </CodeBlock>
 
         <p className="text-[15px] text-muted-foreground leading-[1.7] mb-4">
@@ -484,11 +479,10 @@ watcher.finalize()          # ALWAYS call — persists the run to .argus/runs/`}
           style={{ background: 'rgba(234,179,8,0.06)', border: '1px solid rgba(234,179,8,0.2)' }}
         >
           <p className="text-[14px] leading-[1.7]">
-            <strong className="text-foreground">Always call <Code>watcher.finalize()</Code> after <Code>app.invoke()</Code>.</strong>
+            <strong className="text-foreground">Use <Code>watcher.attach(graph)</Code> — one call for StateGraph or compiled apps.</strong>
             <span className="text-muted-foreground">
-              {' '}It is required for cyclic graphs (loops / research agents) and safe to call on all graphs.
-              Without it, the run stays in memory and is never written to disk — so <Code>argus list</Code>,{' '}
-              <Code>argus show</Code>, and the dashboard will show nothing.
+              {' '}Runs persist when <Code>invoke()</Code> returns, including cyclic graphs.
+              <Code>finalize()</Code> is an optional idempotent flush, not required.
             </span>
           </p>
         </div>

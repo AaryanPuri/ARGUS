@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import functools
 import inspect
 import os
 from typing import Any, Callable
@@ -12,26 +13,38 @@ from argus.session import ArgusSession
 # Backward-compat alias — RunSession was the internal name before ArgusSession was public
 RunSession = ArgusSession
 
+_RUNTIME_METHODS = ("invoke", "ainvoke", "stream", "astream", "batch", "abatch")
+
+
+def _is_compiled_graph(obj: Any) -> bool:
+    """True for a LangGraph compiled app, False for a StateGraph builder."""
+    if not callable(getattr(obj, "invoke", None)):
+        return False
+    # Builders have compile() + add_node(); compiled apps have invoke() + builder.
+    if hasattr(obj, "add_node") and hasattr(obj, "compile"):
+        return False
+    return True
+
 
 class ArgusWatcher:
     """LangGraph adapter for ArgusSession.
 
-    Usage (shortest — pass graph directly):
+    One public API — ``attach()`` works for both uncompiled StateGraphs and
+    already-compiled apps. Runs persist when ``invoke()`` / ``ainvoke()``
+    returns; ``finalize()`` is optional and idempotent.
+
+        watcher = ArgusWatcher()
+        app = watcher.attach(graph)     # StateGraph or compiled app
+        result = app.invoke(state)      # persisted automatically
+        print(watcher.run_id)
+
+    Constructor still accepts an uncompiled graph (patches it; compile yourself):
+
         watcher = ArgusWatcher(graph)
         app = graph.compile()
         result = app.invoke(state)
-        print(watcher.run_id)
 
-    Usage (separate watch call):
-        watcher = ArgusWatcher()
-        watcher.watch(graph)
-        app = graph.compile()
-        result = app.invoke(state)
-
-    Auto-finalize: runs are saved automatically for linear and fan-out/fan-in
-    (DAG) graphs. Only cyclic graphs (with back-edges) need manual finalize():
-
-        watcher.finalize()
+    ``watch()`` / ``watch_compiled()`` remain as thin wrappers around attach().
 
     Usage (semantic validators):
         watcher = ArgusWatcher(graph, validators={
@@ -85,9 +98,22 @@ class ArgusWatcher:
         self._http_recorder = None
         self._session: ArgusSession | None = None
 
-        # If graph was passed to constructor, auto-attach
+        # If graph was passed to constructor, instrument it. Compiled apps
+        # go through attach() (aliases invoke onto the original object).
+        # Uncompiled builders are patched in place so the caller can still
+        # compile() themselves — matching the historical constructor contract.
         if graph is not None:
-            self.watch(graph)
+            if _is_compiled_graph(graph):
+                self.attach(graph)
+            else:
+                self._patch_builder(graph)
+                self._wrap_compile(graph)
+
+    def __enter__(self) -> ArgusWatcher:
+        return self
+
+    def __exit__(self, *args: Any) -> None:
+        self.finalize()
 
     def __del__(self) -> None:
         if self._session is not None and self._session._is_cyclic and not self._session._completed:
@@ -102,65 +128,95 @@ class ArgusWatcher:
 
     @property
     def run_id(self) -> str | None:
-        """The run ID for the current session, or None if watch() hasn't been called."""
+        """The run ID for the current session, or None if attach() hasn't been called."""
         if self._session is None:
             return None
         return self._session.run_id
 
-    def watch_compiled(self, compiled_graph: Any) -> Any:
-        """Attach ARGUS to an already-compiled LangGraph graph.
+    def attach(self, graph: Any) -> Any:
+        """Attach ARGUS to a StateGraph or an already-compiled graph.
 
-        This is the recommended method when you receive a pre-compiled graph
-        or prefer compiling first.  Internally it extracts the underlying
-        StateGraph, attaches monitoring, and recompiles.
+        One call covers both cases — no need to know whether the graph has
+        been compiled yet. Always returns a compiled app with monitoring.
+        ``invoke()`` / ``ainvoke()`` persist the run when they return;
+        ``finalize()`` is optional.
 
         Args:
-            compiled_graph: A ``CompiledGraph`` returned by ``graph.compile()``.
+            graph: A LangGraph ``StateGraph`` or a compiled app
+                (``graph.compile()`` result).
 
         Returns:
-            A new ``CompiledGraph`` with ARGUS monitoring attached.
+            A compiled graph with ARGUS monitoring. For a compiled input,
+            runtime methods are also aliased onto the original object so
+            ``app.invoke()`` keeps working without reassignment.
 
         Usage::
 
-            app = graph.compile(checkpointer=memory)
-            app = watcher.watch_compiled(app)   # returns a new compiled app
-            app.invoke(state)
+            watcher = ArgusWatcher()
+            app = watcher.attach(graph)          # uncompiled StateGraph
+            app = watcher.attach(compiled_app)   # already compiled
+            app.invoke(state)                    # persisted automatically
         """
-        # Extract the builder (StateGraph) from the compiled graph
-        builder = getattr(compiled_graph, "builder", None)
-        if builder is None:
-            # Older LangGraph versions may not have .builder
+        if _is_compiled_graph(graph):
+            return self._attach_compiled(graph)
+
+        if not hasattr(graph, "nodes"):
             raise ValueError(
-                "Cannot extract StateGraph from this compiled graph. "
-                "Your LangGraph version may be too old for watch_compiled(). "
-                "Either upgrade langgraph or use watcher.watch(graph) before compile()."
+                "argus.attach() expects a LangGraph StateGraph or a compiled graph. "
+                "Pass the StateGraph before compile(), or the app returned by compile()."
             )
 
-        # Collect compile kwargs from the existing compiled graph so we
-        # preserve checkpointer, interrupt_before/after, etc.
+        self._patch_builder(graph)
+        self._wrap_compile(graph)
+        return graph.compile()
+
+    def watch_compiled(self, compiled_graph: Any) -> Any:
+        """Attach ARGUS to an already-compiled LangGraph graph.
+
+        Thin wrapper around ``attach()``. Prefer ``attach()`` for new code.
+        """
+        return self.attach(compiled_graph)
+
+    def watch(self, graph: Any) -> None:
+        """Attach ARGUS to a LangGraph StateGraph. Must be called before compile().
+
+        Thin wrapper around ``attach()``. Prefer ``attach()`` for new code —
+        it also accepts already-compiled graphs.
+        """
+        if _is_compiled_graph(graph):
+            raise ValueError(
+                "watch() expects an uncompiled StateGraph. "
+                "Use attach() for compiled graphs: app = watcher.attach(app)."
+            )
+        self.attach(graph)
+
+    def _attach_compiled(self, compiled_graph: Any) -> Any:
+        """Patch the underlying builder, recompile, and auto-persist on invoke."""
+        builder = getattr(compiled_graph, "builder", None)
+        if builder is None:
+            raise ValueError(
+                "Cannot extract StateGraph from this compiled graph. "
+                "Your LangGraph version may be too old for attach(). "
+                "Either upgrade langgraph or pass the StateGraph before compile()."
+            )
+
         compile_kwargs: dict[str, Any] = {}
         for attr in ("checkpointer", "interrupt_before", "interrupt_after"):
             val = getattr(compiled_graph, attr, None)
             if val is not None:
                 compile_kwargs[attr] = val
 
-        self.watch(builder)
-        return builder.compile(**compile_kwargs)
+        self._patch_builder(builder)
+        self._wrap_compile(builder)
+        monitored = builder.compile(**compile_kwargs)
+        self._alias_runtime(compiled_graph, monitored)
+        return monitored
 
-    def watch(self, graph: Any) -> None:
-        """Attach ARGUS to a LangGraph StateGraph. Must be called before compile().
-
-        If you already have a compiled graph, use ``watch_compiled()`` instead.
-        """
+    def _patch_builder(self, graph: Any) -> None:
+        """Instrument a StateGraph in place (session, patch, HTTP recorder)."""
         if not hasattr(graph, "nodes"):
             raise ValueError(
-                "argus.watch() expects a LangGraph StateGraph instance with a .nodes attribute. "
-                "Call watch() before graph.compile(), or use watch_compiled() on a compiled graph."
-            )
-        if hasattr(graph, "_compiled") and graph._compiled:
-            raise ValueError(
-                "argus.watch() must be called before graph.compile(). "
-                "Use watch_compiled() if you already have a compiled graph."
+                "argus.attach() expects a LangGraph StateGraph instance with a .nodes attribute."
             )
 
         node_names = list(graph.nodes.keys())
@@ -209,8 +265,8 @@ class ArgusWatcher:
             import logging
 
             logging.getLogger("argus").info(
-                "Cyclic graph detected — call watcher.finalize() after app.invoke() "
-                "to persist your run. (Auto-finalize is only available for DAG graphs.)"
+                "Cyclic graph detected — run will persist when invoke() returns "
+                "(finalize() is optional)."
             )
 
         # Extract reducer functions from graph schema (Annotated hints + channels)
@@ -242,15 +298,137 @@ class ArgusWatcher:
             except Exception:
                 pass  # HTTP recording is best-effort
 
+    def _wrap_compile(self, graph: Any) -> None:
+        """Make graph.compile() return an app that auto-persists on invoke()."""
+        if getattr(graph, "_argus_compile_wrapped", False):
+            return
+        original_compile = graph.compile
+
+        @functools.wraps(original_compile)
+        def _compile(*args: Any, **kwargs: Any) -> Any:
+            compiled = original_compile(*args, **kwargs)
+            return self._install_auto_persist(compiled)
+
+        graph.compile = _compile  # type: ignore[method-assign]
+        graph._argus_compile_wrapped = True
+
+    def _install_auto_persist(self, compiled: Any) -> Any:
+        """Wrap runtime methods so the run is saved when the call finishes."""
+        if getattr(compiled, "_argus_auto_persist", False):
+            return compiled
+
+        def _persist() -> None:
+            self.finalize()
+
+        original_invoke = compiled.invoke
+
+        @functools.wraps(original_invoke)
+        def _invoke(*args: Any, **kwargs: Any) -> Any:
+            try:
+                return original_invoke(*args, **kwargs)
+            finally:
+                _persist()
+
+        compiled.invoke = _invoke
+
+        original_ainvoke = getattr(compiled, "ainvoke", None)
+        if callable(original_ainvoke):
+
+            @functools.wraps(original_ainvoke)
+            async def _ainvoke(*args: Any, **kwargs: Any) -> Any:
+                try:
+                    return await original_ainvoke(*args, **kwargs)
+                finally:
+                    _persist()
+
+            compiled.ainvoke = _ainvoke
+
+        original_stream = getattr(compiled, "stream", None)
+        if callable(original_stream):
+
+            @functools.wraps(original_stream)
+            def _stream(*args: Any, **kwargs: Any) -> Any:
+                iterator = original_stream(*args, **kwargs)
+
+                def _gen() -> Any:
+                    try:
+                        yield from iterator
+                    finally:
+                        _persist()
+
+                if hasattr(iterator, "__iter__") and not isinstance(
+                    iterator, (dict, list, tuple, str, bytes)
+                ):
+                    return _gen()
+                _persist()
+                return iterator
+
+            compiled.stream = _stream
+
+        original_astream = getattr(compiled, "astream", None)
+        if callable(original_astream):
+
+            @functools.wraps(original_astream)
+            def _astream(*args: Any, **kwargs: Any) -> Any:
+                agen = original_astream(*args, **kwargs)
+
+                async def _agen() -> Any:
+                    try:
+                        async for item in agen:
+                            yield item
+                    finally:
+                        _persist()
+
+                if hasattr(agen, "__aiter__"):
+                    return _agen()
+                return agen
+
+            compiled.astream = _astream
+
+        original_batch = getattr(compiled, "batch", None)
+        if callable(original_batch):
+
+            @functools.wraps(original_batch)
+            def _batch(*args: Any, **kwargs: Any) -> Any:
+                try:
+                    return original_batch(*args, **kwargs)
+                finally:
+                    _persist()
+
+            compiled.batch = _batch
+
+        original_abatch = getattr(compiled, "abatch", None)
+        if callable(original_abatch):
+
+            @functools.wraps(original_abatch)
+            async def _abatch(*args: Any, **kwargs: Any) -> Any:
+                try:
+                    return await original_abatch(*args, **kwargs)
+                finally:
+                    _persist()
+
+            compiled.abatch = _abatch
+
+        compiled._argus_auto_persist = True
+        return compiled
+
+    def _alias_runtime(self, dest: Any, src: Any) -> None:
+        """Copy src runtime methods onto dest so the original compiled object stays live."""
+        if dest is src:
+            return
+        for name in _RUNTIME_METHODS:
+            if hasattr(src, name):
+                try:
+                    setattr(dest, name, getattr(src, name))
+                except Exception:
+                    pass
+
     def finalize(self) -> None:
         """Persist the run record.
 
-        For most graphs (linear, fan-out/fan-in, DAGs) this is called
-        automatically when all terminal nodes complete. You only need
-        to call this manually for cyclic graphs (graphs with back-edges).
-
-        Safe to call even if auto-finalize already ran — it's a no-op
-        the second time.
+        Optional — ``attach()`` wraps invoke/ainvoke so runs are saved when
+        the call returns, including cyclic graphs. Safe to call explicitly
+        (tests, early flush); a second call is a no-op.
         """
         if self._session is not None:
             self._session.finalize()

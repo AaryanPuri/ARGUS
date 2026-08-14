@@ -351,15 +351,9 @@ class ArgusSession:
         atexit.register(self._atexit_finalize)
 
     def _atexit_finalize(self) -> None:
-        """Auto-finalize at exit if the user never called finalize()."""
+        """Safety net: persist at interpreter exit if invoke() never completed."""
         if self._completed:
             return
-        warnings.warn(
-            f"[argus] Run {self.run_id} was never finalized. "
-            "Call watcher.finalize() after app.invoke() to persist runs. "
-            "Auto-saving now.",
-            stacklevel=1,
-        )
         try:
             self._finalize()
         except Exception:
@@ -1463,7 +1457,12 @@ class ArgusSession:
             )
 
     def finalize(self) -> None:
-        """Persist the run record. Required for cyclic graphs after app.invoke() returns."""
+        """Persist the run record.
+
+        Optional for ArgusWatcher — invoke/ainvoke persist automatically.
+        Still the explicit flush for standalone ArgusSession pipelines.
+        Idempotent: a second call is a no-op.
+        """
         self._finalize()
         atexit.unregister(self._atexit_finalize)
 
