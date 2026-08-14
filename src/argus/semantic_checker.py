@@ -177,7 +177,9 @@ def check_semantic_coherence(
             {
                 "sig_id": s.sig_id,
                 "category": s.category,
-                "field_path": ".".join(s.field_path) if isinstance(s.field_path, tuple) else s.field_path,
+                "field_path": (
+                    ".".join(s.field_path) if isinstance(s.field_path, tuple) else s.field_path
+                ),
                 "evidence": s.evidence,
                 "description": s.description,
                 "confidence": round(s.confidence, 3),
@@ -239,7 +241,11 @@ def check_semantic_coherence(
                 dis_results.append(
                     DisambiguationResult(
                         sig_id=sid,
-                        field_path=".".join(signal.field_path) if isinstance(signal.field_path, tuple) else signal.field_path,
+                        field_path=(
+                            ".".join(signal.field_path)
+                            if isinstance(signal.field_path, tuple)
+                            else signal.field_path
+                        ),
                         original_confidence=signal.confidence,
                         llm_verdict=bool(v.get("is_failure", True)),
                         llm_confidence=float(v.get("confidence", 0.5)),

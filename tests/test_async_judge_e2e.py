@@ -190,7 +190,8 @@ class TestAsyncJudgeE2E:
         })
         assert record.overall_status != "clean"
         failed = [e for e in events if e.status not in ("pass", "skipped")]
-        assert len(failed) >= 2, f"Expected ≥2 failures, got {[e.node_name + ':' + e.status for e in events]}"
+        labels = [f"{e.node_name}:{e.status}" for e in events]
+        assert len(failed) >= 2, f"Expected ≥2 failures, got {labels}"
 
 
 @pytest.mark.integration

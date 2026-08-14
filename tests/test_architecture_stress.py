@@ -19,9 +19,8 @@ import pytest
 from conftest import make_event, make_inspection
 
 from argus.inspector import build_root_cause_chain, inspect_tool_outputs, inspect_transition
-from argus.models import InspectionResult, SemanticSignal, ToolFailure
+from argus.models import SemanticSignal, ToolFailure
 from argus.session import ArgusSession
-
 
 # ── Typed state schemas (simulate real LangGraph pipelines) ──────────────────
 
@@ -186,7 +185,7 @@ class TestB_DetectionLayerInteraction:
     def test_b1_structural_miss_caught_by_heuristic(self):
         """Output has all required fields but content is degraded placeholder.
         Structural check passes (fields present), heuristic should catch it."""
-        result = inspect_tool_outputs({
+        inspect_tool_outputs({
             "summary": "Lorem ipsum dolor sit amet",
             "confidence": 0.99,
         })
@@ -267,7 +266,7 @@ class TestB_DetectionLayerInteraction:
         )
         # The query is echoed but the node added routed_to + priority
         # input_echo checks field-to-field, so query→query is 100% similar
-        echo_failures = [tf for tf in result.tool_failures if tf.failure_type == "input_echo"]
+        [tf for tf in result.tool_failures if tf.failure_type == "input_echo"]
         # This WILL fire — and that's actually correct behavior.
         # The question is whether the overall status accounts for new fields.
 
@@ -551,10 +550,10 @@ class TestE_LLMJudgeArchitecture:
 
     def test_e3_judge_receives_validator_results(self):
         """When validators fail, the judge should receive them as prior evidence."""
-        from argus.semantic_checker import check_semantic_coherence
         from argus.models import ValidatorResult
+        from argus.semantic_checker import check_semantic_coherence
 
-        validators = [
+        [
             ValidatorResult("*:check_score", False, "Score below threshold"),
         ]
         # We can't actually call the LLM, but verify the function accepts
@@ -605,10 +604,9 @@ class TestE_LLMJudgeArchitecture:
     def test_e6_multiple_signal_types_all_reach_judge_context(self):
         """When a node has tool failures + semantic signals + anomalies,
         all should be marshalled into the evidence_lines for the judge."""
-        import json
 
         # Build the evidence_lines logic manually (mirrors semantic_checker.py)
-        from argus.models import ValidatorResult, AnomalySignal
+        from argus.models import AnomalySignal, ValidatorResult
 
         validators = [ValidatorResult("test:v", False, "score too low")]
         anomalies = [AnomalySignal(

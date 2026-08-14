@@ -379,7 +379,7 @@ You must respond with valid JSON matching this exact schema:
     }
   ],
   "degradation_narrative": "<developer-readable forensic narrative, 3-8 sentences>",
-  "cross_node_connections": ["<semantic causal connection not captured by field-drop tracking>", ...],
+  "cross_node_connections": ["<causal link not in field-drop tracking>", ...],
   "observations": ["<semantic observation>", ...],
   "debugging_suggestions": [
     {
