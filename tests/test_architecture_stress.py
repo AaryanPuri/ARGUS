@@ -542,9 +542,9 @@ class TestE_LLMJudgeArchitecture:
         # The session logic should NOT let LLM override structural failures
         # (tested via the _can_override guard in session.on_node_end)
 
-        # Verify the guard conditions exist in the code
+        # Verify the guard conditions exist in the verdict application code
         import inspect as _inspect
-        source = _inspect.getsource(session.on_node_end)
+        source = _inspect.getsource(session._apply_judge_verdict)
         assert "_has_structural" in source, "Guard for structural failures must exist"
         assert "_has_placeholder" in source, "Guard for placeholder must exist"
         assert "_can_override" in source, "Override gate must exist"
@@ -567,20 +567,19 @@ class TestE_LLMJudgeArchitecture:
 
     def test_e4_deterministic_layers_run_before_judge(self):
         """Verify execution order: heuristic → structural → anomaly → validators → judge.
-        This is enforced by session.on_node_end ordering."""
+        Deterministic checks run in on_node_end; the LLM judge is dispatched
+        (sync or async) only after all deterministic layers complete."""
         import inspect as _inspect
         source = _inspect.getsource(ArgusSession.on_node_end)
 
-        # Find relative positions of key operations
         inspection_pos = source.find("inspect_transition")
-        disambiguation_pos = source.find("disambiguate_signals")
         validator_pos = source.find("_run_validators")
         anomaly_pos = source.find("detect_anomalies")
-        judge_pos = source.find("check_semantic_coherence")
+        judge_pos = source.find("_run_judge_sync")
 
         assert inspection_pos < validator_pos, "Inspection must run before validators"
         assert validator_pos < anomaly_pos, "Validators must run before anomaly detection"
-        assert anomaly_pos < judge_pos, "Anomaly detection must run before LLM judge"
+        assert anomaly_pos < judge_pos, "Anomaly detection must run before LLM judge dispatch"
 
     def test_e5_judge_skip_doesnt_block_pipeline(self):
         """When LLM is unavailable, the pipeline should still work

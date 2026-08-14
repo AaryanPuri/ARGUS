@@ -32,6 +32,8 @@ import threading
 import time
 import traceback
 import warnings
+from concurrent.futures import Future, ThreadPoolExecutor
+from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from typing import Any, Callable
 
@@ -58,6 +60,23 @@ from argus.storage import save_run
 from argus.utils.cycle_detection import has_cycles
 from argus.utils.ids import generate_run_id
 from argus.utils.serializer import safe_serialize
+
+
+@dataclass
+class _PendingJudge:
+    """Tracks a background LLM semantic check for deferred application."""
+
+    event: NodeEvent
+    future: Future
+    inspection: InspectionResult | None
+    validator_results: list[ValidatorResult]
+    anomaly_signals: list[AnomalySignal]
+    ambiguous_signals: list[SemanticSignal]
+    deterministic_status: str
+    node_name: str
+    input_snap: dict
+    output_snap: dict
+
 
 # Optional GraphInterrupt import — only available when langgraph is installed
 try:
@@ -298,6 +317,13 @@ class ArgusSession:
         self._conditional_sources: set[str] = set()
         self._has_conditional_edges: bool = False
         self._node_attempt_counts: dict[str, int] = {}
+
+        # Async LLM judge: fire semantic checks in background threads,
+        # collect results before _finalize. Cuts per-node blocking from
+        # ~300ms to ~0ms; total LLM time overlaps across nodes.
+        self._judge_pool: ThreadPoolExecutor | None = None
+        self._pending_judges: list[_PendingJudge] = []
+        self._pending_judges_lock = threading.Lock()
 
         # Sync shared community signatures from Supabase in the background.
         # Non-blocking — if not logged in or network fails, silently skips.
@@ -793,14 +819,8 @@ class ArgusSession:
                 if any(a.severity == "critical" for a in anomaly_signals) and status == "pass":
                     status = "semantic_fail"
 
-            # Consolidated per-node LLM call: coherence check + disambiguation
-            #
-            # One LLM call handles both semantic coherence judgment AND
-            # disambiguation of ambiguous heuristic signals. Receives all
-            # prior deterministic signals as context.
-            #
-            # Can: DOWNGRADE pass → semantic_fail, OVERRIDE ambiguous failures → pass
-            # Cannot override: structural failures, placeholders, validators, critical anomalies
+            # Per-node LLM judge: fire in background thread, apply in _finalize.
+            # Deterministic status is recorded now; LLM can refine it later.
             semantic_check_result: SemanticCheckResult | None = None
             disambiguation_results: list[DisambiguationResult] = []
             _should_run_judge = (
@@ -811,8 +831,8 @@ class ArgusSession:
                 and self._llm_investigation_config.semantic_check
                 and status not in ("crashed", "interrupted")
             )
+            _deferred_judge = False
             if _should_run_judge:
-                # Collect ambiguous signals for disambiguation (folded into same call)
                 ambiguous_signals: list[SemanticSignal] = []
                 if (
                     inspection is not None
@@ -828,147 +848,23 @@ class ArgusSession:
                         if conf_lo <= s.confidence <= conf_hi
                     ]
 
-                _judge_exc: Exception | None = None
-                for _retry_i in range(1 + self._judge_max_retries):
-                    try:
-                        from argus.semantic_checker import (
-                            check_semantic_coherence,  # noqa: PLC0415
+                if self._on_judge_failure == "abort":
+                    # Synchronous path: abort mode needs to raise mid-pipeline
+                    semantic_check_result, disambiguation_results = (
+                        self._run_judge_sync(
+                            node_name, input_snap, output_snap,
+                            validator_results, anomaly_signals,
+                            inspection, ambiguous_signals,
                         )
-
-                        semantic_check_result, disambiguation_results = (
-                            check_semantic_coherence(
-                                node_name=node_name,
-                                input_state=input_snap,
-                                output_dict=output_snap,
-                                model=self._llm_investigation_config.semantic_check_model,
-                                validator_results=validator_results,
-                                anomaly_signals=anomaly_signals,
-                                inspection=inspection,
-                                ambiguous_signals=ambiguous_signals or None,
-                            )
-                        )
-                        _judge_exc = None
-                        break
-                    except Exception as _e:
-                        _judge_exc = _e
-                        if _retry_i < self._judge_max_retries:
-                            time.sleep(self._judge_retry_backoff * (2**_retry_i))
-
-                if _judge_exc is not None:
-                    if self._on_judge_failure == "abort":
-                        raise _judge_exc
-                    if self._on_judge_failure == "warn":
-                        import logging  # noqa: PLC0415
-
-                        logging.getLogger("argus").warning(
-                            "Semantic judge failed for node %r: %s",
-                            node_name,
-                            _judge_exc,
-                        )
+                    )
+                    status = self._apply_judge_verdict(
+                        status, semantic_check_result, disambiguation_results,
+                        inspection, validator_results, anomaly_signals,
+                        node_name, behavior_type_val, output_snap,
+                    )
                 else:
-                    # Apply disambiguation: remove confirmed false positives
-                    if disambiguation_results and inspection is not None:
-                        dismissed_ids = {
-                            r.sig_id
-                            for r in disambiguation_results
-                            if not r.llm_verdict and r.llm_confidence >= 0.5
-                        }
-                        if dismissed_ids:
-                            inspection.semantic_signals = [
-                                s
-                                for s in inspection.semantic_signals
-                                if s.sig_id not in dismissed_ids
-                            ]
-                            inspection.tool_failures = [
-                                tf
-                                for tf in inspection.tool_failures
-                                if not any(
-                                    d_id in (tf.evidence or "") for d_id in dismissed_ids
-                                )
-                            ]
-                            inspection.has_tool_failure = any(
-                                tf.severity == "critical" for tf in inspection.tool_failures
-                            )
-                            inspection.is_silent_failure = bool(
-                                inspection.missing_fields or inspection.has_tool_failure
-                            )
-                            _has_failure = (
-                                inspection.is_silent_failure or inspection.has_tool_failure
-                            )
-                            _has_signals = bool(inspection.semantic_signals)
-                            if not _has_failure and not _has_signals:
-                                status = "pass"
-                            elif _has_failure:
-                                status = "fail"
-                            else:
-                                status = "semantic_fail"
-
-                    # Apply coherence verdict
-                    if semantic_check_result is not None:
-                        sc_passed = semantic_check_result.passed
-                        sc_confident = semantic_check_result.confidence >= 0.7
-                        if sc_passed and sc_confident:
-                            _has_structural = inspection and (
-                                inspection.is_silent_failure or inspection.has_tool_failure
-                            )
-                            _has_placeholder = inspection and any(
-                                tf.failure_type == "placeholder_detected"
-                                for tf in (inspection.tool_failures or [])
-                            )
-                            _has_validator_failures = any(
-                                not r.is_valid for r in validator_results
-                            )
-                            _has_critical_anomalies = any(
-                                a.severity == "critical" for a in anomaly_signals
-                            )
-                            _can_override = (
-                                not _has_structural
-                                and not _has_placeholder
-                                and not _has_validator_failures
-                                and not _has_critical_anomalies
-                            )
-                            if _can_override and status != "pass":
-                                status = "pass"
-                                try:
-                                    from argus.feedback_store import record_override  # noqa: PLC0415
-
-                                    record_override(
-                                        run_id=self.run_id,
-                                        node_name=node_name,
-                                        override_type="llm_full_override",
-                                        anomaly_ids=[
-                                            a.anomaly_id
-                                            for a in anomaly_signals
-                                            if a.severity == "critical"
-                                        ],
-                                        anomaly_reasons=[
-                                            a.reason
-                                            for a in anomaly_signals
-                                            if a.severity == "critical"
-                                        ],
-                                        llm_reason=semantic_check_result.reason,
-                                        llm_confidence=semantic_check_result.confidence,
-                                        behavior_type=behavior_type_val or "unknown",
-                                        output_shape={
-                                            "key_count": len(output_snap) if output_snap else 0,
-                                            "depth": _measure_output_depth(output_snap),
-                                            "total_chars": len(
-                                                json.dumps(output_snap, default=str)
-                                            )
-                                            if output_snap
-                                            else 0,
-                                        },
-                                        auto_approve_threshold=(
-                                            self._llm_investigation_config.false_positive_auto_approve_threshold
-                                            if self._llm_investigation_config
-                                            else 0.0
-                                        ),
-                                    )
-                                except Exception:
-                                    pass
-                        elif not sc_passed and sc_confident:
-                            if status == "pass":
-                                status = "semantic_fail"
+                    # Async path: fire LLM in background, don't block
+                    _deferred_judge = True
 
             event = NodeEvent(
                 step_index=step_idx,
@@ -990,6 +886,32 @@ class ArgusSession:
             )
 
             self._events.append(event)
+
+            # Fire deferred LLM judge in background thread
+            if _deferred_judge:
+                if self._judge_pool is None:
+                    self._judge_pool = ThreadPoolExecutor(
+                        max_workers=4, thread_name_prefix="argus-judge"
+                    )
+                future = self._judge_pool.submit(
+                    self._run_judge_sync,
+                    node_name, input_snap, output_snap,
+                    validator_results, anomaly_signals,
+                    inspection, ambiguous_signals,
+                )
+                with self._pending_judges_lock:
+                    self._pending_judges.append(_PendingJudge(
+                        event=event,
+                        future=future,
+                        inspection=inspection,
+                        validator_results=validator_results,
+                        anomaly_signals=anomaly_signals,
+                        ambiguous_signals=ambiguous_signals,
+                        deterministic_status=status,
+                        node_name=node_name,
+                        input_snap=input_snap,
+                        output_snap=output_snap,
+                    ))
 
             # Track terminal node completion for parallel-aware finalization
             if node_name in self._terminal_nodes:
@@ -1026,6 +948,204 @@ class ArgusSession:
                 ValidatorResult(validator_name=vname, is_valid=is_valid, message=message)
             )
         return results
+
+    def _run_judge_sync(
+        self,
+        node_name: str,
+        input_snap: dict,
+        output_snap: dict,
+        validator_results: list[ValidatorResult],
+        anomaly_signals: list[AnomalySignal],
+        inspection: InspectionResult | None,
+        ambiguous_signals: list[SemanticSignal],
+    ) -> tuple[SemanticCheckResult | None, list[DisambiguationResult]]:
+        """Run the LLM semantic judge synchronously (with retries)."""
+        _judge_exc: Exception | None = None
+        result: SemanticCheckResult | None = None
+        dis_results: list[DisambiguationResult] = []
+        for _retry_i in range(1 + self._judge_max_retries):
+            try:
+                from argus.semantic_checker import (
+                    check_semantic_coherence,  # noqa: PLC0415
+                )
+
+                result, dis_results = check_semantic_coherence(
+                    node_name=node_name,
+                    input_state=input_snap,
+                    output_dict=output_snap,
+                    model=self._llm_investigation_config.semantic_check_model,
+                    validator_results=validator_results,
+                    anomaly_signals=anomaly_signals,
+                    inspection=inspection,
+                    ambiguous_signals=ambiguous_signals or None,
+                )
+                return result, dis_results
+            except Exception as _e:
+                _judge_exc = _e
+                if _retry_i < self._judge_max_retries:
+                    time.sleep(self._judge_retry_backoff * (2**_retry_i))
+
+        if _judge_exc is not None:
+            if self._on_judge_failure == "abort":
+                raise _judge_exc
+            if self._on_judge_failure == "warn":
+                import logging  # noqa: PLC0415
+
+                logging.getLogger("argus").warning(
+                    "Semantic judge failed for node %r: %s",
+                    node_name,
+                    _judge_exc,
+                )
+        return None, []
+
+    def _apply_judge_verdict(
+        self,
+        status: str,
+        semantic_check_result: SemanticCheckResult | None,
+        disambiguation_results: list[DisambiguationResult],
+        inspection: InspectionResult | None,
+        validator_results: list[ValidatorResult],
+        anomaly_signals: list[AnomalySignal],
+        node_name: str,
+        behavior_type_val: str | None,
+        output_snap: dict | None,
+    ) -> str:
+        """Apply LLM disambiguation + coherence verdict to status. Returns new status."""
+        if disambiguation_results and inspection is not None:
+            dismissed_ids = {
+                r.sig_id
+                for r in disambiguation_results
+                if not r.llm_verdict and r.llm_confidence >= 0.5
+            }
+            if dismissed_ids:
+                inspection.semantic_signals = [
+                    s
+                    for s in inspection.semantic_signals
+                    if s.sig_id not in dismissed_ids
+                ]
+                inspection.tool_failures = [
+                    tf
+                    for tf in inspection.tool_failures
+                    if not any(
+                        d_id in (tf.evidence or "") for d_id in dismissed_ids
+                    )
+                ]
+                inspection.has_tool_failure = any(
+                    tf.severity == "critical" for tf in inspection.tool_failures
+                )
+                inspection.is_silent_failure = bool(
+                    inspection.missing_fields or inspection.has_tool_failure
+                )
+                _has_failure = (
+                    inspection.is_silent_failure or inspection.has_tool_failure
+                )
+                _has_signals = bool(inspection.semantic_signals)
+                if not _has_failure and not _has_signals:
+                    status = "pass"
+                elif _has_failure:
+                    status = "fail"
+                else:
+                    status = "semantic_fail"
+
+        if semantic_check_result is not None:
+            sc_passed = semantic_check_result.passed
+            sc_confident = semantic_check_result.confidence >= 0.7
+            if sc_passed and sc_confident:
+                _has_structural = inspection and (
+                    inspection.is_silent_failure or inspection.has_tool_failure
+                )
+                _has_placeholder = inspection and any(
+                    tf.failure_type == "placeholder_detected"
+                    for tf in (inspection.tool_failures or [])
+                )
+                _has_validator_failures = any(
+                    not r.is_valid for r in validator_results
+                )
+                _has_critical_anomalies = any(
+                    a.severity == "critical" for a in anomaly_signals
+                )
+                _can_override = (
+                    not _has_structural
+                    and not _has_placeholder
+                    and not _has_validator_failures
+                    and not _has_critical_anomalies
+                )
+                if _can_override and status != "pass":
+                    status = "pass"
+                    try:
+                        from argus.feedback_store import record_override  # noqa: PLC0415
+
+                        record_override(
+                            run_id=self.run_id,
+                            node_name=node_name,
+                            override_type="llm_full_override",
+                            anomaly_ids=[
+                                a.anomaly_id
+                                for a in anomaly_signals
+                                if a.severity == "critical"
+                            ],
+                            anomaly_reasons=[
+                                a.reason
+                                for a in anomaly_signals
+                                if a.severity == "critical"
+                            ],
+                            llm_reason=semantic_check_result.reason,
+                            llm_confidence=semantic_check_result.confidence,
+                            behavior_type=behavior_type_val or "unknown",
+                            output_shape={
+                                "key_count": len(output_snap) if output_snap else 0,
+                                "depth": _measure_output_depth(output_snap),
+                                "total_chars": len(
+                                    json.dumps(output_snap, default=str)
+                                )
+                                if output_snap
+                                else 0,
+                            },
+                            auto_approve_threshold=(
+                                self._llm_investigation_config.false_positive_auto_approve_threshold
+                                if self._llm_investigation_config
+                                else 0.0
+                            ),
+                        )
+                    except Exception:
+                        pass
+            elif not sc_passed and sc_confident:
+                if status == "pass":
+                    status = "semantic_fail"
+
+        return status
+
+    def _apply_deferred_judges(self) -> None:
+        """Collect all background LLM judge results and apply to events."""
+        with self._pending_judges_lock:
+            pending = list(self._pending_judges)
+            self._pending_judges.clear()
+
+        for pj in pending:
+            try:
+                result = pj.future.result(timeout=15)
+                semantic_check_result, disambiguation_results = result
+            except Exception:
+                semantic_check_result, disambiguation_results = None, []
+
+            new_status = self._apply_judge_verdict(
+                pj.deterministic_status,
+                semantic_check_result,
+                disambiguation_results,
+                pj.inspection,
+                pj.validator_results,
+                pj.anomaly_signals,
+                pj.node_name,
+                pj.event.behavior_type,
+                pj.output_snap,
+            )
+            pj.event.status = new_status
+            pj.event.semantic_check = semantic_check_result
+            pj.event.disambiguation_results = disambiguation_results
+
+        if self._judge_pool is not None:
+            self._judge_pool.shutdown(wait=False)
+            self._judge_pool = None
 
     def _check_degraded_input(
         self,
@@ -1097,6 +1217,9 @@ class ArgusSession:
     # ── Finalization ──────────────────────────────────────────────────────────
 
     def _finalize(self) -> None:
+        # Collect all deferred LLM judge results before aggregating status
+        self._apply_deferred_judges()
+
         with self._lock:
             if self._completed:
                 return
