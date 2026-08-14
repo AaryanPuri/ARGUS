@@ -1503,7 +1503,7 @@ def test_semantic_check_skip_marks_not_evaluated(monkeypatch):
 
     monkeypatch.setattr(llm_proxy, "is_available", lambda: False)
 
-    result = check_semantic_coherence(
+    result, dis_results = check_semantic_coherence(
         node_name="fetch",
         input_state={"query": "x"},
         output_dict={"data": "y"},
@@ -1511,6 +1511,7 @@ def test_semantic_check_skip_marks_not_evaluated(monkeypatch):
     assert result.passed is True  # unchanged verdict behavior
     assert result.evaluated is False
     assert "not logged in" in result.reason
+    assert dis_results == []
 
 
 @pytest.mark.unit

@@ -50,6 +50,7 @@ from argus.models import (
     NodeEvent,
     RunRecord,
     SemanticCheckResult,
+    SemanticSignal,
     ToolFailure,
     ValidatorResult,
 )
@@ -769,72 +770,6 @@ class ArgusSession:
                         inspection.degraded_fields = degraded_fields
                         inspection.degraded_upstream_node = upstream_node
 
-            # LLM disambiguation for ambiguous heuristic signals
-            disambiguation_results: list[DisambiguationResult] = []
-            if (
-                inspection is not None
-                and inspection.semantic_signals
-                and self._llm_investigation_config
-                and self._llm_investigation_config.enabled
-                and self._llm_investigation_config.heuristic_disambiguation
-                and status not in ("crashed", "interrupted", "degraded_input")
-            ):
-                conf_lo = self._llm_investigation_config.disambiguation_confidence_low
-                conf_hi = self._llm_investigation_config.disambiguation_confidence_high
-                ambiguous = [
-                    s for s in inspection.semantic_signals if conf_lo <= s.confidence <= conf_hi
-                ]
-                if ambiguous and output_snap is not None:
-                    try:
-                        from argus.heuristic_disambiguator import (
-                            disambiguate_signals,  # noqa: PLC0415
-                        )
-
-                        disambiguation_results = disambiguate_signals(
-                            node_name=node_name,
-                            input_state=input_snap,
-                            output_dict=output_snap,
-                            ambiguous_signals=ambiguous,
-                            model=self._llm_investigation_config.disambiguation_model,
-                        )
-                        # Remove confirmed false positives from inspection
-                        dismissed_ids = {
-                            r.sig_id
-                            for r in disambiguation_results
-                            if not r.llm_verdict and r.llm_confidence >= 0.5
-                        }
-                        if dismissed_ids:
-                            inspection.semantic_signals = [
-                                s
-                                for s in inspection.semantic_signals
-                                if s.sig_id not in dismissed_ids
-                            ]
-                            inspection.tool_failures = [
-                                tf
-                                for tf in inspection.tool_failures
-                                if not any(d_id in (tf.evidence or "") for d_id in dismissed_ids)
-                            ]
-                            # Recalculate derived inspection fields
-                            inspection.has_tool_failure = any(
-                                tf.severity == "critical" for tf in inspection.tool_failures
-                            )
-                            inspection.is_silent_failure = bool(
-                                inspection.missing_fields or inspection.has_tool_failure
-                            )
-                            # Re-derive status after removing false positives
-                            _has_failure = (
-                                inspection.is_silent_failure or inspection.has_tool_failure
-                            )
-                            _has_signals = bool(inspection.semantic_signals)
-                            if not _has_failure and not _has_signals:
-                                status = "pass"
-                            elif _has_failure:
-                                status = "fail"
-                            else:
-                                status = "semantic_fail"
-                    except Exception:
-                        pass  # fail-open: keep ambiguous signals as-is
-
             # semantic validation (skip on crash/interrupt)
             validator_results: list[ValidatorResult] = []
             if output_snap is not None and status in ("pass", "fail"):
@@ -858,18 +793,16 @@ class ArgusSession:
                 if any(a.severity == "critical" for a in anomaly_signals) and status == "pass":
                     status = "semantic_fail"
 
-            # per-node semantic coherence check (LLM) — EVIDENCE-AWARE JUDGE
+            # Consolidated per-node LLM call: coherence check + disambiguation
             #
-            # The LLM judge receives all prior signals (validators, anomalies,
-            # inspection) as context and makes an informed ruling.
+            # One LLM call handles both semantic coherence judgment AND
+            # disambiguation of ambiguous heuristic signals. Receives all
+            # prior deterministic signals as context.
             #
-            # Runs on all non-crash/non-interrupt statuses and can:
-            #   - DOWNGRADE pass → semantic_fail (LLM says output is wrong)
-            #   - OVERRIDE ambiguous heuristic failures → pass
-            # Cannot override: structural failures, placeholder detections,
-            # validator failures, or critical anomaly signals.
+            # Can: DOWNGRADE pass → semantic_fail, OVERRIDE ambiguous failures → pass
+            # Cannot override: structural failures, placeholders, validators, critical anomalies
             semantic_check_result: SemanticCheckResult | None = None
-            _pre_llm_status = status
+            disambiguation_results: list[DisambiguationResult] = []
             _should_run_judge = (
                 output_snap is not None
                 and input_snap
@@ -879,6 +812,22 @@ class ArgusSession:
                 and status not in ("crashed", "interrupted")
             )
             if _should_run_judge:
+                # Collect ambiguous signals for disambiguation (folded into same call)
+                ambiguous_signals: list[SemanticSignal] = []
+                if (
+                    inspection is not None
+                    and inspection.semantic_signals
+                    and self._llm_investigation_config.heuristic_disambiguation
+                    and status not in ("degraded_input",)
+                ):
+                    conf_lo = self._llm_investigation_config.disambiguation_confidence_low
+                    conf_hi = self._llm_investigation_config.disambiguation_confidence_high
+                    ambiguous_signals = [
+                        s
+                        for s in inspection.semantic_signals
+                        if conf_lo <= s.confidence <= conf_hi
+                    ]
+
                 _judge_exc: Exception | None = None
                 for _retry_i in range(1 + self._judge_max_retries):
                     try:
@@ -886,24 +835,26 @@ class ArgusSession:
                             check_semantic_coherence,  # noqa: PLC0415
                         )
 
-                        semantic_check_result = check_semantic_coherence(
-                            node_name=node_name,
-                            input_state=input_snap,
-                            output_dict=output_snap,
-                            model=self._llm_investigation_config.semantic_check_model,
-                            validator_results=validator_results,
-                            anomaly_signals=anomaly_signals,
-                            inspection=inspection,
+                        semantic_check_result, disambiguation_results = (
+                            check_semantic_coherence(
+                                node_name=node_name,
+                                input_state=input_snap,
+                                output_dict=output_snap,
+                                model=self._llm_investigation_config.semantic_check_model,
+                                validator_results=validator_results,
+                                anomaly_signals=anomaly_signals,
+                                inspection=inspection,
+                                ambiguous_signals=ambiguous_signals or None,
+                            )
                         )
                         _judge_exc = None
-                        break  # success — exit retry loop
+                        break
                     except Exception as _e:
                         _judge_exc = _e
                         if _retry_i < self._judge_max_retries:
                             time.sleep(self._judge_retry_backoff * (2**_retry_i))
 
                 if _judge_exc is not None:
-                    # All retries exhausted — apply failure policy
                     if self._on_judge_failure == "abort":
                         raise _judge_exc
                     if self._on_judge_failure == "warn":
@@ -914,76 +865,110 @@ class ArgusSession:
                             node_name,
                             _judge_exc,
                         )
-                    # "skip" and "warn" both continue with heuristic results
-                elif semantic_check_result is not None:
-                    sc_passed = semantic_check_result.passed
-                    sc_confident = semantic_check_result.confidence >= 0.7
-                    if sc_passed and sc_confident:
-                        # LLM says output is valid — but only override if
-                        # the heuristic failures are ambiguous.  Never override
-                        # structural failures (missing fields) or high-confidence
-                        # semantic detections (placeholder values).
-                        _has_structural = inspection and (
-                            inspection.is_silent_failure or inspection.has_tool_failure
-                        )
-                        _has_placeholder = inspection and any(
-                            tf.failure_type == "placeholder_detected"
-                            for tf in (inspection.tool_failures or [])
-                        )
-                        _has_validator_failures = any(
-                            not r.is_valid for r in validator_results
-                        )
-                        _has_critical_anomalies = any(
-                            a.severity == "critical" for a in anomaly_signals
-                        )
-                        _can_override = (
-                            not _has_structural
-                            and not _has_placeholder
-                            and not _has_validator_failures
-                            and not _has_critical_anomalies
-                        )
-                        if _can_override and status != "pass":
-                            status = "pass"
-                            # Record the override for feedback/learning
-                            try:
-                                from argus.feedback_store import record_override  # noqa: PLC0415
-
-                                record_override(
-                                    run_id=self.run_id,
-                                    node_name=node_name,
-                                    override_type="llm_full_override",
-                                    anomaly_ids=[
-                                        a.anomaly_id
-                                        for a in anomaly_signals
-                                        if a.severity == "critical"
-                                    ],
-                                    anomaly_reasons=[
-                                        a.reason
-                                        for a in anomaly_signals
-                                        if a.severity == "critical"
-                                    ],
-                                    llm_reason=semantic_check_result.reason,
-                                    llm_confidence=semantic_check_result.confidence,
-                                    behavior_type=behavior_type_val or "unknown",
-                                    output_shape={
-                                        "key_count": len(output_snap) if output_snap else 0,
-                                        "depth": _measure_output_depth(output_snap),
-                                        "total_chars": len(json.dumps(output_snap, default=str))
-                                        if output_snap
-                                        else 0,
-                                    },
-                                    auto_approve_threshold=(
-                                        self._llm_investigation_config.false_positive_auto_approve_threshold
-                                        if self._llm_investigation_config
-                                        else 0.0
-                                    ),
+                else:
+                    # Apply disambiguation: remove confirmed false positives
+                    if disambiguation_results and inspection is not None:
+                        dismissed_ids = {
+                            r.sig_id
+                            for r in disambiguation_results
+                            if not r.llm_verdict and r.llm_confidence >= 0.5
+                        }
+                        if dismissed_ids:
+                            inspection.semantic_signals = [
+                                s
+                                for s in inspection.semantic_signals
+                                if s.sig_id not in dismissed_ids
+                            ]
+                            inspection.tool_failures = [
+                                tf
+                                for tf in inspection.tool_failures
+                                if not any(
+                                    d_id in (tf.evidence or "") for d_id in dismissed_ids
                                 )
-                            except Exception:
-                                pass
-                    elif not sc_passed and sc_confident:
-                        # LLM says output is incoherent → downgrade to semantic_fail
-                        if status == "pass":
-                            status = "semantic_fail"
+                            ]
+                            inspection.has_tool_failure = any(
+                                tf.severity == "critical" for tf in inspection.tool_failures
+                            )
+                            inspection.is_silent_failure = bool(
+                                inspection.missing_fields or inspection.has_tool_failure
+                            )
+                            _has_failure = (
+                                inspection.is_silent_failure or inspection.has_tool_failure
+                            )
+                            _has_signals = bool(inspection.semantic_signals)
+                            if not _has_failure and not _has_signals:
+                                status = "pass"
+                            elif _has_failure:
+                                status = "fail"
+                            else:
+                                status = "semantic_fail"
+
+                    # Apply coherence verdict
+                    if semantic_check_result is not None:
+                        sc_passed = semantic_check_result.passed
+                        sc_confident = semantic_check_result.confidence >= 0.7
+                        if sc_passed and sc_confident:
+                            _has_structural = inspection and (
+                                inspection.is_silent_failure or inspection.has_tool_failure
+                            )
+                            _has_placeholder = inspection and any(
+                                tf.failure_type == "placeholder_detected"
+                                for tf in (inspection.tool_failures or [])
+                            )
+                            _has_validator_failures = any(
+                                not r.is_valid for r in validator_results
+                            )
+                            _has_critical_anomalies = any(
+                                a.severity == "critical" for a in anomaly_signals
+                            )
+                            _can_override = (
+                                not _has_structural
+                                and not _has_placeholder
+                                and not _has_validator_failures
+                                and not _has_critical_anomalies
+                            )
+                            if _can_override and status != "pass":
+                                status = "pass"
+                                try:
+                                    from argus.feedback_store import record_override  # noqa: PLC0415
+
+                                    record_override(
+                                        run_id=self.run_id,
+                                        node_name=node_name,
+                                        override_type="llm_full_override",
+                                        anomaly_ids=[
+                                            a.anomaly_id
+                                            for a in anomaly_signals
+                                            if a.severity == "critical"
+                                        ],
+                                        anomaly_reasons=[
+                                            a.reason
+                                            for a in anomaly_signals
+                                            if a.severity == "critical"
+                                        ],
+                                        llm_reason=semantic_check_result.reason,
+                                        llm_confidence=semantic_check_result.confidence,
+                                        behavior_type=behavior_type_val or "unknown",
+                                        output_shape={
+                                            "key_count": len(output_snap) if output_snap else 0,
+                                            "depth": _measure_output_depth(output_snap),
+                                            "total_chars": len(
+                                                json.dumps(output_snap, default=str)
+                                            )
+                                            if output_snap
+                                            else 0,
+                                        },
+                                        auto_approve_threshold=(
+                                            self._llm_investigation_config.false_positive_auto_approve_threshold
+                                            if self._llm_investigation_config
+                                            else 0.0
+                                        ),
+                                    )
+                                except Exception:
+                                    pass
+                        elif not sc_passed and sc_confident:
+                            if status == "pass":
+                                status = "semantic_fail"
 
             event = NodeEvent(
                 step_index=step_idx,
@@ -1267,46 +1252,11 @@ class ArgusSession:
         except Exception:
             pass
 
-        # LLM-assisted correlation augmentation (non-critical)
-        if (
-            record.correlation
-            and self._llm_investigation_config
-            and self._llm_investigation_config.enabled
-            and self._llm_investigation_config.llm_correlation
-            and record.overall_status != "clean"
-        ):
-            try:
-                from argus.llm_correlator import augment_correlation  # noqa: PLC0415
-
-                llm_insight = augment_correlation(
-                    record=record,
-                    deterministic_report=record.correlation,
-                    model=self._llm_investigation_config.correlation_model,
-                    max_tokens=self._llm_investigation_config.correlation_max_tokens,
-                )
-                if llm_insight is not None:
-                    record.correlation.llm_insight = llm_insight
-            except Exception:
-                pass  # fail-open: deterministic correlation stands alone
-
-        # Replay LLM comparison (non-critical)
-        llm_cfg = self._llm_investigation_config
-        if parent_record and llm_cfg and llm_cfg.enabled:
-            try:
-                from argus.llm_investigator import compare_replay_runs
-
-                record.replay_comparison = compare_replay_runs(
-                    parent_record,
-                    record,
-                    model=self._llm_investigation_config.model,
-                )
-            except Exception:
-                pass
-
-        # LLM semantic investigation (non-critical — never blocks persistence)
+        # Consolidated per-run LLM call: investigation (absorbs correlation
+        # augmentation and loop analysis — one call with full context)
         if self._llm_investigation_config and self._llm_investigation_config.enabled:
             try:
-                from argus.llm_investigator import investigate
+                from argus.llm_investigator import investigate  # noqa: PLC0415
 
                 record.llm_investigation = investigate(
                     record,
@@ -1340,16 +1290,6 @@ class ArgusSession:
                             save_candidates(existing)
                         else:
                             add_candidate(gen_sig, record.run_id)
-            except Exception:
-                pass
-
-        # Loop analysis — mandatory LLM analysis for cyclic runs
-        has_loops = any(e.total_iterations and e.total_iterations > 1 for e in record.steps)
-        if record.is_cyclic and has_loops:
-            try:
-                from argus.loop_analyzer import analyze_loops
-
-                record.loop_analyses = analyze_loops(record)
             except Exception:
                 pass
 

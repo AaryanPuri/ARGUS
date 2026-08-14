@@ -405,6 +405,7 @@ class LLMInvestigationResult:
     root_cause_explanation: str  # semantic explanation of the root cause
     causal_hypotheses: list[SemanticHypothesis]
     degradation_narrative: str  # developer-readable forensic narrative
+    cross_node_connections: list[str]  # semantic causal links beyond field-drop tracking
     observations: list[str]  # semantic observations about the execution
     debugging_suggestions: list[str]  # actionable next steps for the developer
     confidence: float  # overall confidence in the analysis (0.0–1.0)

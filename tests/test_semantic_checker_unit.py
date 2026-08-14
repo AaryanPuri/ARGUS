@@ -23,32 +23,32 @@ def _mock_llm(monkeypatch, response_content, is_available=True):
 class TestSemanticCheckerPass:
     def test_pass_verdict(self, monkeypatch):
         _mock_llm(monkeypatch, {"pass": True, "reason": "looks good", "confidence": 0.9})
-        result = check_semantic_coherence("node_a", {"q": "hello"}, {"a": "world"})
+        result, _ = check_semantic_coherence("node_a", {"q": "hello"}, {"a": "world"})
         assert result.passed is True
         assert result.confidence == 0.9
 
     def test_fail_verdict(self, monkeypatch):
         _mock_llm(monkeypatch, {"pass": False, "reason": "nonsense", "confidence": 0.85})
-        result = check_semantic_coherence("node_a", {"q": "hello"}, {"a": "world"})
+        result, _ = check_semantic_coherence("node_a", {"q": "hello"}, {"a": "world"})
         assert result.passed is False
 
 @pytest.mark.unit
 class TestSemanticCheckerSkip:
     def test_empty_input_skipped(self, monkeypatch):
         _mock_llm(monkeypatch, {"pass": True})
-        result = check_semantic_coherence("node_a", {}, {"a": "world"})
+        result, _ = check_semantic_coherence("node_a", {}, {"a": "world"})
         assert result.passed is True
         assert "skipped" in result.reason
 
     def test_empty_output_skipped(self, monkeypatch):
         _mock_llm(monkeypatch, {"pass": True})
-        result = check_semantic_coherence("node_a", {"q": "hello"}, {})
+        result, _ = check_semantic_coherence("node_a", {"q": "hello"}, {})
         assert result.passed is True
         assert "skipped" in result.reason
 
     def test_not_available_skipped(self, monkeypatch):
         _mock_llm(monkeypatch, {"pass": True}, is_available=False)
-        result = check_semantic_coherence("node_a", {"q": "hello"}, {"a": "world"})
+        result, _ = check_semantic_coherence("node_a", {"q": "hello"}, {"a": "world"})
         assert result.passed is True
         assert "not logged in" in result.reason
 
@@ -61,7 +61,7 @@ class TestSemanticCheckerMalformed:
             "choices": [{"message": {"content": "not json at all"}}],
             "usage": {},
         })
-        result = check_semantic_coherence("node_a", {"q": "hello"}, {"a": "world"})
+        result, _ = check_semantic_coherence("node_a", {"q": "hello"}, {"a": "world"})
         assert result.passed is True
 
     def test_no_choices_defaults_pass(self, monkeypatch):
@@ -70,7 +70,7 @@ class TestSemanticCheckerMalformed:
             "choices": [],
             "usage": {},
         })
-        result = check_semantic_coherence("node_a", {"q": "hello"}, {"a": "world"})
+        result, _ = check_semantic_coherence("node_a", {"q": "hello"}, {"a": "world"})
         assert result.passed is True
 
     def test_error_in_result(self, monkeypatch):
@@ -78,7 +78,7 @@ class TestSemanticCheckerMalformed:
         monkeypatch.setattr("argus.llm_proxy.create_chat_completion", lambda **kwargs: {
             "error": "rate limited",
         })
-        result = check_semantic_coherence("node_a", {"q": "hello"}, {"a": "world"})
+        result, _ = check_semantic_coherence("node_a", {"q": "hello"}, {"a": "world"})
         assert result.passed is True
         assert "rate limited" in result.reason
 

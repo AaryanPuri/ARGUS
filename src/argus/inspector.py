@@ -12,6 +12,21 @@ from argus.utils.type_introspection import extract_fields, get_node_state_type
 _EMPTY_VALUES = (None, "", [], {})
 _PRIMITIVE_TYPES = (str, int, float, bool)
 
+
+def _is_empty_element(v: Any) -> bool:
+    """True if a collection element carries no content (null, blank, or empty).
+
+    Numeric 0/False are NOT empty — they're valid data. Only None, whitespace-only
+    strings, and empty collections count.
+    """
+    if v is None:
+        return True
+    if isinstance(v, str):
+        return v.strip() == ""
+    if isinstance(v, (list, tuple, dict, set)):
+        return len(v) == 0
+    return False
+
 # ── Truncation detection helpers ─────────────────────────────────────────────
 
 _TRUNCATION_RE = re.compile(r"\w$")
@@ -256,6 +271,22 @@ def inspect_tool_outputs(
                     )
                 )
                 continue  # don't also flag as error_in_data
+            # Non-empty collection whose every element is empty/null — a tool
+            # that "returned N results" that are all hollow looks successful but
+            # carries no content. Worse than an empty list because it passes a
+            # naive length check.
+            if isinstance(value, (list, dict)):
+                items = value if isinstance(value, list) else list(value.values())
+                if items and all(_is_empty_element(v) for v in items):
+                    _add(
+                        ToolFailure(
+                            failure_type="empty_result",
+                            field_name=key,
+                            severity="warning",
+                            evidence=f"tool returned {len(items)} items but all are empty/null",
+                        )
+                    )
+                    continue  # don't also flag as error_in_data
 
         # Rule 4 — error string in a non-error field
         if isinstance(value, str) and _ERROR_STR_RE.match(value):

@@ -398,6 +398,7 @@ def _deserialize_llm_investigation(data: dict[str, Any]) -> LLMInvestigationResu
         root_cause_explanation=data.get("root_cause_explanation", ""),
         causal_hypotheses=hypotheses,
         degradation_narrative=data.get("degradation_narrative", ""),
+        cross_node_connections=data.get("cross_node_connections", []),
         observations=data.get("observations", []),
         debugging_suggestions=data.get("debugging_suggestions", []),
         confidence=data.get("confidence", 0.0),

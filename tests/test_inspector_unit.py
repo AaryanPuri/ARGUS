@@ -124,6 +124,34 @@ class TestRule3EmptyResults:
         result = inspect_tool_outputs({"results": [1, 2, 3]})
         assert not any(tf.failure_type == "empty_result" for tf in result.tool_failures)
 
+    # Hollow-collection cases: N results returned but every element is empty/null.
+    # These look successful (non-zero length) but carry no content.
+    def test_list_all_none(self):
+        result = inspect_tool_outputs({"results": [None, None, None]})
+        assert any(tf.failure_type == "empty_result" for tf in result.tool_failures)
+
+    def test_list_all_empty_dicts(self):
+        result = inspect_tool_outputs({"documents": [{}, {}]})
+        assert any(tf.failure_type == "empty_result" for tf in result.tool_failures)
+
+    def test_list_all_blank_strings(self):
+        result = inspect_tool_outputs({"items": ["", "  ", ""]})
+        assert any(tf.failure_type == "empty_result" for tf in result.tool_failures)
+
+    def test_dict_all_empty_values(self):
+        result = inspect_tool_outputs({"data": {"a": None, "b": ""}})
+        assert any(tf.failure_type == "empty_result" for tf in result.tool_failures)
+
+    def test_mixed_real_and_empty_ok(self):
+        # Partial content present — not a hollow result, must stay clean.
+        result = inspect_tool_outputs({"results": [None, {"title": "x"}]})
+        assert not any(tf.failure_type == "empty_result" for tf in result.tool_failures)
+
+    def test_numeric_zeros_ok(self):
+        # 0 is valid data, not "empty" — must not flag.
+        result = inspect_tool_outputs({"results": [0, 0, 0]})
+        assert not any(tf.failure_type == "empty_result" for tf in result.tool_failures)
+
 
 # ── Rule 4: Error strings ────────────────────────────────────────────────────
 

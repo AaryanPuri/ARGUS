@@ -1,9 +1,11 @@
 """Per-node semantic coherence check via a lightweight LLM call.
 
-Evidence-aware judge: receives validator results, anomaly signals, and
-inspection findings as context alongside input/output.  Returns an audit
-trail (evidence_considered, overridden_signals) with every ruling.
-Uses gpt-4o-mini by default — ~500 tokens in, ~100 tokens out.
+Evidence-aware judge: receives validator results, anomaly signals,
+inspection findings, AND ambiguous heuristic signals as context.
+Returns a coherence ruling plus disambiguation verdicts — one LLM
+call instead of two.
+
+Uses gpt-4o-mini by default — ~600 tokens in, ~150 tokens out.
 """
 
 from __future__ import annotations
@@ -12,17 +14,21 @@ import json
 import time
 from typing import Any
 
-from argus.models import SemanticCheckResult
+from argus.models import DisambiguationResult, SemanticCheckResult, SemanticSignal
 
 _SYSTEM_PROMPT = (
     "You verify whether an AI pipeline node produced semantically correct "
     "output given its input. Respond with JSON:\n"
     '{"pass": bool, "reason": "<1 sentence>", "confidence": <0.0-1.0>, '
     '"evidence_considered": ["<signal1>", ...], '
-    '"overridden_signals": ["<signal_you_disagree_with>", ...]}\n\n'
+    '"overridden_signals": ["<signal_you_disagree_with>", ...], '
+    '"disambiguation_verdicts": [{"sig_id": "<id>", "is_failure": <bool>, '
+    '"confidence": <0.0-1.0>, "reason": "<1 sentence>"}]}\n\n'
     "- evidence_considered: list every Prior Signal you evaluated (empty list if none provided)\n"
     "- overridden_signals: list any Prior Signals you chose to PASS despite "
-    "(empty list if you agreed with all signals or none were provided)\n\n"
+    "(empty list if you agreed with all signals or none were provided)\n"
+    "- disambiguation_verdicts: verdict for each Ambiguous Heuristic Match "
+    "(empty list if none provided)\n\n"
     "Rules:\n"
     '- "pass": true if the output is a reasonable response to the input\n'
     '- "pass": false ONLY if the output is completely unrelated, contradictory, '
@@ -47,7 +53,13 @@ _SYSTEM_PROMPT = (
     "specific business-logic constraint was violated (e.g., a required field "
     "is missing). You MUST weigh these heavily — if a validator flagged a "
     "missing required field and you can confirm it is absent from the output, "
-    "FAIL the node regardless of how reasonable the text looks."
+    "FAIL the node regardless of how reasonable the text looks.\n"
+    "- DISAMBIGUATION: If 'Ambiguous Heuristic Matches' are provided, these are "
+    "pattern matches with borderline confidence. For each, determine if the matched "
+    "pattern represents a real problem (placeholder text, corrupted output, semantic "
+    "degradation) or legitimate content that happens to match. Return one verdict per "
+    "match in disambiguation_verdicts. When in doubt, mark is_failure=true "
+    "(false negatives are worse than false positives for disambiguation)."
 )
 
 _MAX_VALUE_LEN = 800
@@ -55,7 +67,6 @@ _MAX_PAYLOAD_CHARS = 6000
 
 
 def _truncate(v: Any) -> str:
-    """Convert a value to a truncated string representation."""
     s = str(v) if not isinstance(v, str) else v
     if len(s) > _MAX_VALUE_LEN:
         return s[:_MAX_VALUE_LEN] + "... (truncated)"
@@ -63,7 +74,6 @@ def _truncate(v: Any) -> str:
 
 
 def _compact_dict(d: dict[str, Any]) -> dict[str, str]:
-    """Produce a compact, truncated snapshot of a dict for the prompt."""
     out: dict[str, str] = {}
     total = 0
     for k, v in d.items():
@@ -78,12 +88,6 @@ def _compact_dict(d: dict[str, Any]) -> dict[str, str]:
 
 
 def _skip_result(reason: str, model: str, ms: float) -> SemanticCheckResult:
-    """Return a passing result for skipped/errored checks.
-
-    `evaluated=False` records that the judge never actually ran — distinct
-    from a real judged pass, so callers that need to tell the two apart
-    (coverage accounting, display) can.
-    """
     return SemanticCheckResult(
         passed=True,
         reason=reason,
@@ -108,25 +112,25 @@ def check_semantic_coherence(
     validator_results: list[Any] | None = None,
     anomaly_signals: list[Any] | None = None,
     inspection: Any | None = None,
-) -> SemanticCheckResult:
-    """Check if a node's output is semantically coherent with its input.
+    ambiguous_signals: list[SemanticSignal] | None = None,
+) -> tuple[SemanticCheckResult, list[DisambiguationResult]]:
+    """Check coherence and disambiguate heuristic signals in one LLM call.
 
-    Returns a passing result on any error — this check must never block
-    the pipeline.
+    Returns (coherence_result, disambiguation_results).
+    On error returns a passing result and empty disambiguation list.
     """
     t0 = time.perf_counter()
 
-    from argus.llm_proxy import create_chat_completion, is_available  # noqa: PLC0415
+    from argus.llm_proxy import create_chat_completion, is_available
 
     if not is_available():
-        return _skip_result("check skipped: not logged in (run: argus login)", model, 0.0)
+        return _skip_result("check skipped: not logged in (run: argus login)", model, 0.0), []
 
     compact_in = _compact_dict(input_state)
     compact_out = _compact_dict(output_dict)
 
-    # Skip if there's nothing meaningful to compare
     if not compact_in or not compact_out:
-        return _skip_result("check skipped: empty input or output", model, 0.0)
+        return _skip_result("check skipped: empty input or output", model, 0.0), []
 
     user_msg = (
         f'Node: "{node_name}"\n'
@@ -134,7 +138,6 @@ def check_semantic_coherence(
         f"Output: {json.dumps(compact_out, default=str)}"
     )
 
-    # Inject prior evidence so the LLM judges with full context
     evidence_lines: list[str] = []
 
     failed_validators = [v for v in (validator_results or []) if not v.is_valid]
@@ -168,6 +171,29 @@ def check_semantic_coherence(
             "relevant text while still violating structural/business constraints."
         )
 
+    amb = ambiguous_signals or []
+    if amb:
+        flagged = [
+            {
+                "sig_id": s.sig_id,
+                "category": s.category,
+                "field_path": ".".join(s.field_path) if isinstance(s.field_path, tuple) else s.field_path,
+                "evidence": s.evidence,
+                "description": s.description,
+                "confidence": round(s.confidence, 3),
+            }
+            for s in amb
+        ]
+        user_msg += (
+            "\n\nAmbiguous Heuristic Matches (need your verdict):\n"
+            + json.dumps(flagged, indent=2)
+            + "\n\nFor each match above, return a verdict in disambiguation_verdicts. "
+            "is_failure=true means the pattern indicates a real problem. "
+            "is_failure=false means the content is legitimate despite matching."
+        )
+
+    max_tokens = 150 if not amb else 200 + 30 * len(amb)
+
     try:
         result = create_chat_completion(
             model=model,
@@ -175,22 +201,22 @@ def check_semantic_coherence(
                 {"role": "system", "content": _SYSTEM_PROMPT},
                 {"role": "user", "content": user_msg},
             ],
-            max_tokens=150,
+            max_tokens=max_tokens,
             temperature=0.0,
             response_format={"type": "json_object"},
-            timeout=5.0,
+            timeout=8.0 if amb else 5.0,
         )
         elapsed = (time.perf_counter() - t0) * 1000
 
         if "error" in result:
-            return _skip_result(f"check skipped: {result['error']}", model, elapsed)
+            return _skip_result(f"check skipped: {result['error']}", model, elapsed), []
 
         choices = result.get("choices", [])
         raw = choices[0]["message"]["content"] if choices else "{}"
         parsed = json.loads(raw)
         usage = result.get("usage", {})
 
-        return SemanticCheckResult(
+        sc = SemanticCheckResult(
             passed=bool(parsed.get("pass", True)),
             reason=str(parsed.get("reason", "")),
             confidence=float(parsed.get("confidence", 0.0)),
@@ -201,6 +227,31 @@ def check_semantic_coherence(
             evidence_considered=tuple(parsed.get("evidence_considered", ())),
             overridden_signals=tuple(parsed.get("overridden_signals", ())),
         )
+
+        dis_results: list[DisambiguationResult] = []
+        if amb:
+            sig_map = {s.sig_id: s for s in amb}
+            for v in parsed.get("disambiguation_verdicts", []):
+                sid = v.get("sig_id", "")
+                if sid not in sig_map:
+                    continue
+                signal = sig_map[sid]
+                dis_results.append(
+                    DisambiguationResult(
+                        sig_id=sid,
+                        field_path=".".join(signal.field_path) if isinstance(signal.field_path, tuple) else signal.field_path,
+                        original_confidence=signal.confidence,
+                        llm_verdict=bool(v.get("is_failure", True)),
+                        llm_confidence=float(v.get("confidence", 0.5)),
+                        llm_reason=str(v.get("reason", "")),
+                        model=model,
+                        prompt_tokens=usage.get("prompt_tokens", 0),
+                        completion_tokens=usage.get("completion_tokens", 0),
+                        duration_ms=round(elapsed, 2),
+                    )
+                )
+
+        return sc, dis_results
     except Exception as exc:
         elapsed = (time.perf_counter() - t0) * 1000
-        return _skip_result(f"check skipped: {exc}", model, elapsed)
+        return _skip_result(f"check skipped: {exc}", model, elapsed), []
