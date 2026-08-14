@@ -92,10 +92,8 @@ _SETUP_LINES = [
     ("argus key set <openai-key>", "# optional: enable AI-powered detection (BYOK)"),
     ("from argus import ArgusWatcher", ""),
     ("watcher = ArgusWatcher()", ""),
-    ("watcher.watch(graph)", "# graph = your StateGraph, before .compile()"),
-    ("app = graph.compile()", ""),
-    ("app.invoke(initial_state)", ""),
-    ("watcher.finalize()", "# persists the run to .argus/runs/"),
+    ("app = watcher.attach(graph)", "# StateGraph or compiled app"),
+    ("app.invoke(initial_state)", "# run persists automatically"),
 ]
 
 _COMMANDS = [

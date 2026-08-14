@@ -10,9 +10,8 @@ LangGraph usage:
     watcher = ArgusWatcher(validators={
         "my_node": lambda out: (out.get("score", 0) > 0.5, "Score too low"),
     })
-    watcher.watch(graph)        # before graph.compile()
-    app = graph.compile()
-    result = app.invoke(state)
+    app = watcher.attach(graph)     # StateGraph or compiled app
+    result = app.invoke(state)      # persisted automatically
 
 Framework-agnostic usage (Prefect, Temporal, raw Python, etc.):
     from argus import ArgusSession

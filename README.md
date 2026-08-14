@@ -102,16 +102,22 @@ That's it. ARGUS is set up and ready to go.
 ```python
 from argus import ArgusWatcher
 
-watcher = ArgusWatcher(graph)       # attach to your StateGraph
-app = graph.compile()
-result = app.invoke(initial_state)
-watcher.finalize()                  # persist the run to .argus/runs/
+watcher = ArgusWatcher()
+app = watcher.attach(graph)         # StateGraph or already-compiled app
+result = app.invoke(initial_state)  # run is persisted automatically
 ```
 
 ARGUS monitors every node, detects failures, and saves the run. No changes to your node functions.
 
-> **Always call `watcher.finalize()`** after `app.invoke()`. Required for cyclic graphs, safe for all. Without it the run stays in memory and won't appear in `argus list` or the dashboard.
+> **`finalize()` is optional.** `attach()` wraps `invoke()` / `ainvoke()` so the run is written to `.argus/runs/` when the call returns — including cyclic graphs. Calling `watcher.finalize()` afterwards is a no-op.
 
+Constructor form still works if you compile yourself:
+
+```python
+watcher = ArgusWatcher(graph)       # uncompiled StateGraph
+app = graph.compile()
+result = app.invoke(initial_state)
+```
 ---
 
 ## What It Catches
