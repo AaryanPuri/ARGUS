@@ -30,11 +30,11 @@ CLI, LangGraph adapter, and UI. Fully local. Package name is **`argus-agents`**,
 argus init
 ```
 
-Writes Cursor and Claude skills (`.cursor/skills/argus-debug/` and `.claude/skills/argus-debug/`). Commit them. Later chats already know ARGUS exists, that runs live in `.argus/runs/<id>.json`, and to **read that JSON instead of guessing from logs**.
+Writes Cursor and Claude skills (`.cursor/skills/argus-debug/` and `.claude/skills/argus-debug/`). Commit them. The skill teaches first-time `ArgusWatcher.attach()` wiring **and** the debug loop. Later chats already know ARGUS exists, that runs live in `.argus/runs/<id>.json`, and to **read that JSON instead of guessing from logs**.
 
 **3. Attach ARGUS**
 
-Ask your agent to wire ARGUS in (the skill loads on LangGraph / pipeline-failed questions), or paste the [AI Setup Prompt](https://arguslabs.in) once. Happy path: `ArgusWatcher.attach(graph)` — heuristics on, judge off, no login, no TypedDict rewrite.
+Ask your editor agent to wire ARGUS. After `argus init`, that is enough — the skill already contains the setup prompt. The [AI Setup Prompt](https://arguslabs.in) on the landing page is a fallback if you still want to paste a one-shot. Happy path: `ArgusWatcher.attach(graph)` — heuristics on, judge off, no login, no TypedDict rewrite.
 
 <img src="https://github.com/VaradDurge/ARGUS/blob/master/assets/Argus%20Guidelines%20and%20Contribution.png?raw=true" width="700"/>
 

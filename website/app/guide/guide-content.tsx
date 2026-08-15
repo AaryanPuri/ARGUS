@@ -99,8 +99,8 @@ export default function GuideContent() {
 
         <div className="space-y-5 mb-8">
           <Step n={1} title="Install ARGUS" text="Run pip install argus-agents in your project. That ships the CLI, LangGraph adapter, and UI. The package name is argus-agents, not argus." />
-          <Step n={2} title="Write project skills" text="Run argus init. That writes Cursor and Claude skills at .cursor/skills/argus-debug/ and .claude/skills/argus-debug/. Commit them so later chats know ARGUS exists, that runs live in .argus/runs, and to read the JSON instead of guessing from logs." />
-          <Step n={3} title="Attach ARGUS" text="Ask your editor agent to wire ARGUS in (the skill loads on LangGraph / pipeline-failed questions), or paste the AI Setup Prompt from the landing page (shown below). Happy path: ArgusWatcher.attach(graph) — heuristics on, judge off, no login, no TypedDict rewrite." />
+          <Step n={2} title="Write project skills" text="Run argus init. That writes Cursor and Claude skills at .cursor/skills/argus-debug/ and .claude/skills/argus-debug/. Commit them. The skill teaches first-time ArgusWatcher.attach() wiring and the debug loop, so later chats can wire ARGUS and read .argus/runs JSON instead of guessing from logs." />
+          <Step n={3} title="Attach ARGUS" text="Ask your editor agent to wire ARGUS — after argus init the skill already contains the setup prompt, so you do not need to paste anything. The AI Setup Prompt from the landing page (shown below) is a fallback. Happy path: ArgusWatcher.attach(graph) — heuristics on, judge off, no login, no TypedDict rewrite." />
         </div>
 
         <div className="rounded-lg overflow-hidden mb-8 max-w-[520px]" style={{ border: '1px solid var(--border)' }}>
@@ -176,10 +176,12 @@ export default function GuideContent() {
           AI Integration Prompt
         </h2>
         <p className="text-[15px] text-muted-foreground mb-5 leading-relaxed max-w-[620px]">
-          This is the full prompt copied by the AI Setup Prompt button. Prefer{" "}
-          <Code>argus init</Code> first so later chats already have the skill; paste
-          this once if you still want a one-shot wiring prompt. It attaches ARGUS
-          without rewriting your state types or node signatures.
+          This is the full prompt copied by the AI Setup Prompt button. After{" "}
+          <Code>argus init</Code>, asking the editor agent to wire ARGUS is enough
+          because the skill already contains the setup prompt. Paste this once only
+          if you still want a one-shot wiring prompt (landing-page paste is a
+          fallback, not required). It attaches ARGUS without rewriting your state
+          types or node signatures.
         </p>
         <div
           className="rounded-lg overflow-hidden"

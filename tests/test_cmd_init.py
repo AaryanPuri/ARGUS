@@ -23,6 +23,16 @@ _KEYWORDS = (
     "ARGUS",
 )
 
+_SETUP_TRIGGERS = (
+    "attach",
+    "wire ARGUS",
+    "add monitoring",
+    "ArgusWatcher",
+    "setup",
+    "empty documents",
+    ".argus/runs",
+)
+
 
 def _project_root(tmp_path: Path, monkeypatch) -> Path:
     monkeypatch.delenv("ARGUS_DIR", raising=False)
@@ -40,11 +50,17 @@ def test_skill_template_ships_in_package():
     desc_block = body.split("---", 2)[1]
     for kw in _KEYWORDS:
         assert kw in desc_block, f"frontmatter description missing {kw!r}"
+    for trigger in _SETUP_TRIGGERS:
+        assert trigger in desc_block, f"frontmatter description missing {trigger!r}"
     assert "ArgusWatcher.attach" in body
+    assert "find the graph" in body.lower()
+    assert "Do not convert plain-dict state to TypedDict" in body
+    assert "pip install argus-agents" in body
+    assert "not `argus`" in body or "not argus" in body
+    assert "graph.compile()" in body
     assert ".argus/runs" in body
     assert "argus show" in body
     assert "argus replay" in body
-    assert "Do not convert plain-dict state to TypedDict" in body
     assert "semantic_judge=False" in body
     assert "guessing from logs" in body
     assert "argus login" in body
@@ -132,5 +148,9 @@ def test_readme_and_guide_document_argus_init():
     assert "argus init" in readme
     assert ".cursor/skills/argus-debug" in readme
     assert ".claude/skills/argus-debug" in readme
+    assert "skill already contains the setup prompt" in readme
+    assert "fallback" in readme.lower()
     assert "argus init" in guide
     assert ".cursor/skills/argus-debug" in guide
+    assert "skill already contains the setup prompt" in guide
+    assert "fallback" in guide.lower()
