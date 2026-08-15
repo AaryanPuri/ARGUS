@@ -20,6 +20,12 @@ Print a short summary, then integrate. Do not "fix compatibility" by rewriting t
 Install: pip install argus-agents
 (The PyPI package is argus-agents, not argus. Default install includes the CLI, LangGraph adapter, and UI. LLM judge is off by default — heuristics only. Optional later: argus key set, then pass semantic_judge=True.)
 
+Also run: argus init
+This writes project skills for Cursor and Claude:
+  .cursor/skills/argus-debug/SKILL.md
+  .claude/skills/argus-debug/SKILL.md
+Commit them. Later chats will read .argus/runs JSON instead of guessing from logs.
+
 Add ArgusWatcher to the file where the graph is built. Keep my existing state and node functions as-is:
 
 from argus import ArgusWatcher
@@ -93,7 +99,8 @@ export default function GuideContent() {
 
         <div className="space-y-5 mb-8">
           <Step n={1} title="Install ARGUS" text="Run pip install argus-agents in your project. That ships the CLI, LangGraph adapter, and UI. The package name is argus-agents, not argus." />
-          <Step n={2} title="Copy the AI Setup Prompt" text="On the ARGUS landing page, click the AI Setup Prompt button (shown below). This copies a prompt that handles the full integration for you." />
+          <Step n={2} title="Write project skills" text="Run argus init. That writes Cursor and Claude skills at .cursor/skills/argus-debug/ and .claude/skills/argus-debug/. Commit them so later chats know ARGUS exists, that runs live in .argus/runs, and to read the JSON instead of guessing from logs." />
+          <Step n={3} title="Attach ARGUS" text="Ask your editor agent to wire ARGUS in (the skill loads on LangGraph / pipeline-failed questions), or paste the AI Setup Prompt from the landing page (shown below). Happy path: ArgusWatcher.attach(graph) — heuristics on, judge off, no login, no TypedDict rewrite." />
         </div>
 
         <div className="rounded-lg overflow-hidden mb-8 max-w-[520px]" style={{ border: '1px solid var(--border)' }}>
@@ -101,9 +108,8 @@ export default function GuideContent() {
         </div>
 
         <div className="space-y-5 mb-8">
-          <Step n={3} title="Paste into your AI coding tool" text="Paste the prompt into Claude Code, Cursor, or Copilot. The AI will audit your codebase and integrate ARGUS with the right config." />
           <Step n={4} title="Run your pipeline" text="Execute your LangGraph / LangChain pipeline as usual. ARGUS captures the run automatically." />
-          <Step n={5} title="Open the dashboard" text="Run argus ui in your terminal. The web dashboard opens in your browser showing your runs." />
+          <Step n={5} title="Inspect the run" text="Run argus show last or argus ui. The agent should read .argus/runs/<id>.json rather than guessing from terminal logs." />
         </div>
 
         <h3 className="text-sm font-semibold uppercase tracking-widest text-muted-foreground mb-4">After setup</h3>
@@ -122,7 +128,16 @@ export default function GuideContent() {
           All commands available from your terminal after installing ARGUS.
         </p>
 
-        <h3 className="text-sm font-semibold uppercase tracking-widest text-muted-foreground mb-4">Viewing runs</h3>
+        <h3 className="text-sm font-semibold uppercase tracking-widest text-muted-foreground mb-4">Setup</h3>
+        <CodeBlock title="Write Cursor and Claude project skills">{`argus init`}</CodeBlock>
+        <p className="text-[15px] text-muted-foreground leading-[1.7] mb-6">
+          Writes <Code>.cursor/skills/argus-debug/SKILL.md</Code> and{" "}
+          <Code>.claude/skills/argus-debug/SKILL.md</Code>. Safe to re-run (skips
+          unchanged files; pass <Code>--force</Code> to overwrite). Commit them so
+          later chats read <Code>.argus/runs</Code> JSON instead of guessing from logs.
+        </p>
+
+        <h3 className="text-sm font-semibold uppercase tracking-widest text-muted-foreground mb-4 mt-8">Viewing runs</h3>
         <CodeBlock title="List all runs">{`argus list`}</CodeBlock>
         <CodeBlock title="Show the most recent run">{`argus show last`}</CodeBlock>
         <CodeBlock title="Show a specific run (full ID or 8-char prefix)">{`argus show <run-id>`}</CodeBlock>
@@ -157,9 +172,10 @@ export default function GuideContent() {
           AI Integration Prompt
         </h2>
         <p className="text-[15px] text-muted-foreground mb-5 leading-relaxed max-w-[620px]">
-          This is the full prompt copied by the AI Setup Prompt button. Paste it into
-          Claude Code, Cursor, or Copilot. It attaches ARGUS without rewriting your
-          state types or node signatures.
+          This is the full prompt copied by the AI Setup Prompt button. Prefer{" "}
+          <Code>argus init</Code> first so later chats already have the skill; paste
+          this once if you still want a one-shot wiring prompt. It attaches ARGUS
+          without rewriting your state types or node signatures.
         </p>
         <div
           className="rounded-lg overflow-hidden"
