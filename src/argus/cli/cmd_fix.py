@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import sys
 from pathlib import Path
 from typing import Optional
 
@@ -50,6 +51,19 @@ def fix_run(
         )
         return
 
-    # Plain print, not console.print — rich would wrap and re-style the
+    # Plain write, not console.print — rich would wrap and re-style the
     # markdown, and this output is meant to be pasted verbatim.
-    print(result.prompt, end="")
+    #
+    # The prompt contains em-dashes and arrows. On Windows a redirected
+    # stdout uses the locale encoding (cp1252), not UTF-8, so a bare print()
+    # raises UnicodeEncodeError on exactly the documented `argus fix <id> >
+    # fix.md` invocation. Write UTF-8 bytes to the underlying buffer when the
+    # stream cannot encode the text itself.
+    try:
+        sys.stdout.write(result.prompt)
+    except UnicodeEncodeError:
+        buffer = getattr(sys.stdout, "buffer", None)
+        if buffer is None:
+            raise
+        buffer.write(result.prompt.encode("utf-8"))
+        buffer.flush()

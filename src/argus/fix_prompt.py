@@ -133,7 +133,8 @@ def build_fix_prompt_for_record(
             "there is nothing to write a fix prompt about."
         )
 
-    source_path, path_note = _resolve_source(record, target)
+    source_cache: dict = {}
+    source_path, path_note = _resolve_source(record, target, source_cache)
     symptom_event = _find_symptom_event(record, target)
 
     prompt = _render(
@@ -144,6 +145,7 @@ def build_fix_prompt_for_record(
         path_note=path_note,
         symptom_event=symptom_event,
         sanitized=sanitized,
+        source_cache=source_cache,
     )
     return FixPromptResult(prompt=prompt, node=target, source_path=source_path)
 
@@ -260,7 +262,11 @@ def _has_failure_signal(event: NodeEvent) -> bool:
 # ── Source resolution ─────────────────────────────────────────────────────────
 
 
-def _resolve_source(record: RunRecord, node_name: str) -> tuple[Optional[str], str]:
+def _resolve_source(
+    record: RunRecord,
+    node_name: str,
+    _cache: Optional[dict] = None,
+) -> tuple[Optional[str], str]:
     """Resolve ``file.py:line`` for a node. Returns (path, note).
 
     ``node_fn_paths`` is recorded relative to the cwd at capture time, so a
@@ -271,29 +277,45 @@ def _resolve_source(record: RunRecord, node_name: str) -> tuple[Optional[str], s
     recorded = (record.node_fn_paths or {}).get(node_name)
 
     if not recorded:
-        try:
-            # use_llm=False keeps the offline guarantee — the locator's step 4
-            # is an LLM call and its default is use_llm=True.
-            resolved = _locate_offline(record)
+        # locate_node_sources resolves every node in one project scan, so the
+        # result is cached across calls — the target and the symptom node
+        # would otherwise each pay a full grep + AST walk of the project.
+        if _cache is not None and "resolved" in _cache:
+            recorded = _cache["resolved"].get(node_name)
+        else:
+            try:
+                # use_llm=False keeps the offline guarantee — the locator's
+                # step 4 is an LLM call and its default is use_llm=True.
+                resolved = _locate_offline(record)
+            except Exception:
+                resolved = {}
+            if _cache is not None:
+                _cache["resolved"] = resolved
             recorded = resolved.get(node_name)
-        except Exception:
-            recorded = None
 
     if not recorded:
         return None, ""
 
-    # rsplit on the *last* colon, not partition's first — a Windows absolute
-    # path ("C:\...\file.py:42") has an earlier colon after the drive letter.
-    if ":" in recorded:
-        file_part, line_part = recorded.rsplit(":", 1)
-    else:
-        file_part, line_part = recorded, ""
+    # Strip a trailing ":<line>" only when the tail really is a line number.
+    # Splitting on the first colon breaks "C:\...\file.py:42", and splitting
+    # on the last breaks "C:\...\file.py" (no line) — both are recorded
+    # shapes, since watcher.py stores absolute paths when relpath fails
+    # across Windows drives.
+    file_part = recorded
+    head, _, tail = recorded.rpartition(":")
+    if head and tail.isdigit():
+        file_part = head
     if Path(file_part).exists():
         return recorded, ""
 
     reanchored = _reanchor(file_part)
     if reanchored:
-        suffix = f":{line_part}" if line_part else ""
+        # The recorded line number belongs to a different checkout — carrying
+        # it over would point the agent at an unrelated line. Recompute it
+        # against the file we actually found; drop it if we cannot.
+        fn_name = _fn_name_for(record, node_name)
+        relocated = _find_line(Path(reanchored), fn_name)
+        suffix = f":{relocated}" if relocated else ""
         return f"{reanchored}{suffix}", ""
 
     note = (
@@ -310,6 +332,22 @@ def _locate_offline(record: RunRecord) -> dict:
     return locate_node_sources(record, use_llm=False)
 
 
+def _fn_name_for(record: RunRecord, node_name: str) -> str:
+    """The function implementing a node — from node_fn_refs, else the node name."""
+    fn_ref = (record.node_fn_refs or {}).get(node_name, "")
+    return fn_ref.split(":")[-1] if fn_ref else node_name
+
+
+def _find_line(path: Path, fn_name: str) -> Optional[int]:
+    """Line of ``def fn_name`` in a file, via source_locator's AST helper."""
+    try:
+        from argus.source_locator import _find_function_line
+
+        return _find_function_line(path, fn_name)
+    except Exception:
+        return None
+
+
 def _reanchor(file_part: str) -> Optional[str]:
     """Find a recorded file by basename under cwd. Unique match only."""
     name = Path(file_part).name
@@ -322,10 +360,16 @@ def _reanchor(file_part: str) -> Optional[str]:
     # ambiguous.
     from argus.source_locator import _EXCLUDE_DIRS
 
+    def _is_noise(parts: tuple) -> bool:
+        # Mirror source_locator's walk rule: its named excludes *and* every
+        # dot-directory (.pytest_cache, .direnv, .cache, ...), not just the
+        # ones that happen to be listed.
+        return any(
+            part in _EXCLUDE_DIRS or part.startswith(".") for part in parts[:-1]
+        )
+
     matches = sorted(
-        p
-        for p in Path.cwd().rglob(name)
-        if not (_EXCLUDE_DIRS & set(p.parts))
+        p for p in Path.cwd().rglob(name) if not _is_noise(p.relative_to(Path.cwd()).parts)
     )
     if len(matches) != 1:
         return None
@@ -415,7 +459,12 @@ def _render_state(
         block = f"```\n{body}\n```"
     else:
         subset = {k: state[k] for k in present}
-        block = f"```json\n{_dumps(subset)}\n```"
+        body, truncated = _dumps(subset)
+        # A truncated dump is not valid JSON — fencing it as ```json invites
+        # the agent to parse it and treat the parse failure as the bug it was
+        # asked to diagnose.
+        fence = "text" if truncated else "json"
+        block = f"```{fence}\n{body}\n```"
 
     remaining = [k for k in state.keys() if k not in present]
     if remaining:
@@ -423,15 +472,15 @@ def _render_state(
     return block
 
 
-def _dumps(value: Any) -> str:
-    """Deterministic JSON rendering, truncated to keep the prompt readable."""
+def _dumps(value: Any) -> tuple[str, bool]:
+    """Deterministic JSON rendering. Returns (text, was_truncated)."""
     try:
         text = json.dumps(value, indent=2, default=repr)
     except (TypeError, ValueError):
         text = repr(value)
     if len(text) > _MAX_VALUE_CHARS:
-        text = text[:_MAX_VALUE_CHARS] + "\n... (truncated)"
-    return text
+        return text[:_MAX_VALUE_CHARS] + "\n... (truncated)", True
+    return text, False
 
 
 def _describe_shape(value: Any) -> str:
@@ -457,6 +506,14 @@ def _describe_shape(value: Any) -> str:
 
 def _successors(record: RunRecord, node_name: str) -> list[str]:
     return list((record.graph_edge_map or {}).get(node_name, []))
+
+
+def _degraded_upstream(event: NodeEvent) -> Optional[str]:
+    """The node that failed to produce what this one needed, if any."""
+    insp = event.inspection
+    if insp is None or not insp.degraded_fields:
+        return None
+    return insp.degraded_upstream_node
 
 
 def _is_reachable(record: RunRecord, source: str, dest: str) -> bool:
@@ -485,6 +542,8 @@ def _is_reachable(record: RunRecord, source: str, dest: str) -> bool:
 def _join_names(names: list[str]) -> str:
     """'`a`', '`a` and `b`', '`a`, `b` and `c`' — reads as prose, not a dump."""
     ticked = [f"`{n}`" for n in names]
+    if not ticked:
+        return ""
     if len(ticked) == 1:
         return ticked[0]
     return ", ".join(ticked[:-1]) + f" and {ticked[-1]}"
@@ -513,7 +572,7 @@ def _headline(
         if insp.missing_fields:
             succ = _successors(record, target)
             field = insp.missing_fields[0]
-            if succ:
+            if len(succ) == 1:
                 return (
                     f"`{target}` does not produce the `{field}` field that "
                     f"`{succ[0]}` needs"
@@ -554,16 +613,32 @@ def _exception_label(exc: str) -> str:
     return last if len(last) <= 120 else last[:120] + "..."
 
 
+# An exception line is "SomeError: message" or "pkg.mod.SomeError: message".
+# Anchored to the start and requiring the colon immediately after a dotted
+# identifier, so traceback frame lines ("File \"x.py\", line 2, in f") and
+# bare continuation lines never match.
+_EXC_LINE_RE = re.compile(r"^([A-Za-z_][A-Za-z0-9_]*(?:\.[A-Za-z_][A-Za-z0-9_]*)*)\s*:")
+
+
 def _exception_type_name(exc: str) -> str:
     """Just the exception class name (e.g. ``KeyError``) — safe to show under
     ``--sanitized``, unlike the full message, whose argument is frequently
     the literal value that triggered the exception (``KeyError: '<value>'``,
-    ``ValueError: invalid literal ... '<value>'``)."""
+    ``ValueError: invalid literal ... '<value>'``).
+
+    Scans upward for the last line that actually *looks* like an exception
+    line. Taking the final line and splitting on ":" is not safe: a
+    multi-line message (pydantic's ``Input should be a valid integer
+    [input_value='...']``) leaves the recorded value as the last line, and a
+    colon-free line would then be returned whole.
+    """
     lines = [ln.strip() for ln in exc.strip().splitlines() if ln.strip()]
-    if not lines:
-        return "an error"
-    name = lines[-1].split(":", 1)[0].strip()
-    return name or "an error"
+    for line in reversed(lines):
+        m = _EXC_LINE_RE.match(line)
+        if m:
+            # Drop any module path — "pkg.mod.ValidationError" → "ValidationError".
+            return m.group(1).rsplit(".", 1)[-1]
+    return "an error"
 
 
 def _what_went_wrong(
@@ -611,13 +686,16 @@ def _what_went_wrong(
         )
 
     if insp.missing_fields:
+        # missing_fields is a union over every successor's schema and the
+        # per-successor attribution is discarded upstream, so naming a
+        # specific successor as the reader would be a guess. With exactly one
+        # successor it is unambiguous; otherwise stay accurate and unnamed.
         succ = _successors(record, target)
         for field in insp.missing_fields:
-            if succ:
-                readers = _join_names(succ[:2])
+            if len(succ) == 1:
                 paras.append(
-                    f"The next node ({readers}) reads `state['{field}']`, but this "
-                    f"node's output has no `{field}` key."
+                    f"The next node (`{succ[0]}`) reads `state['{field}']`, but "
+                    f"this node's output has no `{field}` key."
                 )
             else:
                 paras.append(
@@ -627,6 +705,12 @@ def _what_went_wrong(
 
     for field in insp.empty_fields:
         paras.append(f"`{field}` is present in the output but empty.")
+
+    for field in insp.suspicious_empty_keys:
+        paras.append(
+            f"`{field}` was written as an empty value, which will degrade "
+            "whatever reads it downstream."
+        )
 
     for m in insp.type_mismatches:
         if sanitized:
@@ -648,9 +732,15 @@ def _what_went_wrong(
         paras.append(f"In `{where}`: {ss.description}.{evidence}")
 
     for a in event.anomaly_signals:
-        paras.append(
-            f"Expected {a.expected_behavior}, but observed {a.observed_behavior}."
-        )
+        # expected_behavior is a declared threshold/profile and reason is a
+        # fixed label, but observed_behavior can carry content lifted from
+        # the output (anomaly_detector assigns worst_reason to it).
+        if sanitized:
+            paras.append(f"Expected {a.expected_behavior}, but the output did not match.")
+        else:
+            paras.append(
+                f"Expected {a.expected_behavior}, but observed {a.observed_behavior}."
+            )
 
     return paras
 
@@ -693,13 +783,15 @@ def _done_when(
             conds.append(f"`{m.field_name}` is {m.expected_type}.")
         for ss in insp.semantic_signals:
             where = ss.dotted_path or "the output"
-            conds.append(f"`{where}` no longer contains {ss.category.replace('_', ' ')}.")
-        for field in insp.degraded_fields:
-            upstream = insp.degraded_upstream_node
-            if upstream:
-                conds.append(
-                    f"`{target}` receives a usable `{field}` from `{upstream}`."
-                )
+            # ss.description is registry prose; the raw category slug is an
+            # internal enum and reads as broken grammar in a success criterion.
+            conds.append(f"`{where}` no longer shows this problem: {ss.description}.")
+        # NOTE: degraded_fields deliberately produces no condition here. The
+        # fix for a degraded node is in the upstream node that failed to
+        # produce the field — but Constraints forbids editing other nodes, so
+        # emitting "receives a usable `x` from `upstream`" as a success
+        # criterion would be unsatisfiable as written. The upstream origin is
+        # surfaced in "What to do" instead.
 
     if symptom_event is not None and symptom_event.exception:
         conds.append(
@@ -724,9 +816,9 @@ def _render(
     path_note: str,
     symptom_event: Optional[NodeEvent],
     sanitized: bool,
+    source_cache: Optional[dict] = None,
 ) -> str:
-    fn_ref = (record.node_fn_refs or {}).get(target, "")
-    fn_name = fn_ref.split(":")[-1] if fn_ref else target
+    fn_name = _fn_name_for(record, target)
     parts: list[str] = []
 
     # 1 — Objective. First, so it survives truncation in a small context.
@@ -746,10 +838,22 @@ def _render(
 
     # 3 — What to do / what went wrong.
     parts.append("## What to do")
-    parts.append(
-        f"Fix the `{target}` node so the problem described below cannot happen "
-        "again. Change the behaviour, not the symptom."
-    )
+    upstream = _degraded_upstream(event)
+    if upstream and upstream != target:
+        # This node is a victim, not the origin — say so plainly rather than
+        # asking for a fix here that only an upstream change can deliver.
+        parts.append(
+            f"`{target}` is not where the bug is. It received incomplete input "
+            f"because `{upstream}` did not produce what it needed. Fix "
+            f"`{upstream}` instead — run `argus fix {record.run_id} --node "
+            f"{upstream}` for a prompt targeting it. Only change `{target}` if "
+            f"you have confirmed `{upstream}` is already correct."
+        )
+    else:
+        parts.append(
+            f"Fix the `{target}` node so the problem described below cannot happen "
+            "again. Change the behaviour, not the symptom."
+        )
 
     parts.append("## What went wrong")
     parts.extend(_what_went_wrong(record, target, event, sanitized=sanitized))
@@ -763,7 +867,15 @@ def _render(
     # 5 — Causal note. Only when the failure surfaced somewhere else.
     if symptom_event is not None:
         parts.append("## Why this file and not the crash site")
-        parts.extend(_causal_section(record, target, symptom_event, sanitized=sanitized))
+        parts.extend(
+            _causal_section(
+                record,
+                target,
+                symptom_event,
+                sanitized=sanitized,
+                source_cache=source_cache,
+            )
+        )
 
     # 6 — Done when.
     parts.append("## Done when")
@@ -811,8 +923,15 @@ def _evidence_section(
     if rendered_out:
         out.append(f"Output `{target}` produced:")
         out.append(rendered_out)
-    elif event.output_dict is None and event.status == "crashed":
-        out.append(f"`{target}` produced no output — it raised before returning.")
+    elif event.output_dict is None:
+        if event.status == "crashed":
+            out.append(f"`{target}` produced no output — it raised before returning.")
+        else:
+            out.append(f"`{target}` returned no output dict at all.")
+    else:
+        # An empty-but-present dict is falsy, so _render_state declines it —
+        # but "returned {}" is precisely the silent failure being reported.
+        out.append(f"Output `{target}` produced: `{{}}` — an empty dict, no keys at all.")
 
     if event.exception:
         out.append(f"`{target}` raised:")
@@ -844,15 +963,40 @@ def _evidence_section(
 
 
 def _relative_position(record: RunRecord, target: str, symptom: str) -> str:
-    """'Two nodes later' — reads better than raw step indices for an agent."""
-    chain = record.root_cause_chain or []
-    if target in chain and symptom in chain:
-        gap = chain.index(symptom) - chain.index(target)
-        if gap == 1:
-            return "Immediately after"
-        if gap > 1:
-            return f"{gap} nodes later"
+    """'Two nodes later' — reads better than raw step indices for an agent.
+
+    Measured in graph hops. root_cause_chain holds only the nodes that were
+    flagged as failing, so counting positions in it would call two nodes
+    three hops apart "immediately after" each other.
+    """
+    hops = _hop_distance(record, target, symptom)
+    if hops == 1:
+        return "Immediately after"
+    if hops and hops > 1:
+        return f"{hops} nodes later"
     return "Later in the run"
+
+
+def _hop_distance(record: RunRecord, source: str, dest: str) -> Optional[int]:
+    """Shortest edge count from source to dest, or None if unreachable."""
+    edges = record.graph_edge_map or {}
+    if not edges:
+        return None
+    frontier = [source]
+    seen = {source}
+    depth = 0
+    while frontier:
+        depth += 1
+        nxt = []
+        for node in frontier:
+            for succ in edges.get(node, []):
+                if succ == dest:
+                    return depth
+                if succ not in seen:
+                    seen.add(succ)
+                    nxt.append(succ)
+        frontier = nxt
+    return None
 
 
 def _causal_section(
@@ -861,12 +1005,13 @@ def _causal_section(
     symptom_event: NodeEvent,
     *,
     sanitized: bool,
+    source_cache: Optional[dict] = None,
 ) -> list[str]:
     out: list[str] = []
     symptom = symptom_event.node_name
     # Route through the same exists-check/reanchor/note logic used for the
     # primary target — node_fn_paths is exactly as likely to be stale here.
-    symptom_path, symptom_note = _resolve_source(record, symptom)
+    symptom_path, symptom_note = _resolve_source(record, symptom, source_cache)
     where = f"`{symptom_path}`" if symptom_path else f"the `{symptom}` node"
 
     chain = record.root_cause_chain or []

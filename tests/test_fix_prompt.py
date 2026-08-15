@@ -15,6 +15,7 @@ from argus.fix_prompt import (
     build_fix_prompt_for_record,
 )
 from argus.models import (
+    AnomalySignal,
     FieldMismatch,
     InspectionResult,
     NodeEvent,
@@ -394,7 +395,12 @@ def test_unresolvable_path_still_produces_a_usable_prompt(project: Path) -> None
 
 
 def test_path_recorded_from_another_directory_is_reanchored(project: Path) -> None:
-    """node_fn_paths is cwd-relative at capture time (spec section 8)."""
+    """node_fn_paths is cwd-relative at capture time (spec section 8).
+
+    The recorded line number belongs to that other checkout, so it must be
+    recomputed against the file actually found — carrying `:34` onto a
+    2-line file would point the agent at a line that does not exist.
+    """
     record = _record(
         overall_status="crashed",
         first_failure_step="retrieve",
@@ -405,7 +411,28 @@ def test_path_recorded_from_another_directory_is_reanchored(project: Path) -> No
         ],
     )
     result = build_fix_prompt_for_record(record)
-    assert result.source_path == "src/nodes/retrieval.py:34"
+    # `def retrieve` is on line 1 of the fixture — not the recorded line 34.
+    assert result.source_path == "src/nodes/retrieval.py:1"
+
+
+def test_reanchor_drops_line_number_when_function_not_found(project: Path) -> None:
+    """If the re-anchored file has no matching function, emit the path with
+    no line rather than a stale one from another checkout."""
+    (project / "src" / "nodes" / "orphan.py").write_text("X = 1\n")
+    record = _record(
+        overall_status="crashed",
+        first_failure_step="orphan",
+        root_cause_chain=["orphan"],
+        graph_node_names=["orphan"],
+        graph_edge_map={},
+        node_fn_paths={"orphan": "some/other/checkout/orphan.py:99"},
+        steps=[
+            _event(0, "orphan", "crashed", output_dict=None, exception="RuntimeError: boom"),
+        ],
+    )
+    result = build_fix_prompt_for_record(record)
+    assert result.source_path == "src/nodes/orphan.py"
+    assert ":99" not in (result.source_path or "")
 
 
 def test_windows_drive_letter_path_is_not_mistaken_for_a_missing_colon(
@@ -619,6 +646,184 @@ def test_sanitized_does_not_leak_exception_message(project: Path) -> None:
     assert "KeyError" in scrubbed
     # The section's own claim must now actually be true.
     assert "Values omitted" in scrubbed
+
+
+def test_sanitized_does_not_leak_multiline_exception_message(project: Path) -> None:
+    """The exception line is not always the last line. A multi-line message
+    (pydantic-style) leaves the recorded value last — taking the final line
+    and splitting on ':' would emit that value verbatim."""
+    record = _record(
+        overall_status="crashed",
+        first_failure_step="retrieve",
+        root_cause_chain=["retrieve"],
+        node_fn_paths={"retrieve": "src/nodes/retrieval.py:1"},
+        steps=[
+            _event(
+                0,
+                "retrieve",
+                "crashed",
+                output_dict=None,
+                exception=(
+                    "Traceback (most recent call last):\n"
+                    "pydantic_core.ValidationError: 1 validation error\n"
+                    "Input should be a valid integer "
+                    "[type=int_parsing, input_value='sk-live-SECRET-abc', "
+                    "input_type=str]"
+                ),
+            )
+        ],
+    )
+    scrubbed = build_fix_prompt_for_record(record, sanitized=True).prompt
+    assert "sk-live-SECRET-abc" not in scrubbed
+    assert "input_value" not in scrubbed
+    # The class name survives, with its module path stripped.
+    assert "ValidationError" in scrubbed
+    assert "pydantic_core" not in scrubbed
+
+
+def test_sanitized_does_not_leak_anomaly_observed_behavior(project: Path) -> None:
+    record = _record(
+        overall_status="silent_failure",
+        first_failure_step="retrieve",
+        root_cause_chain=["retrieve"],
+        node_fn_paths={"retrieve": "src/nodes/retrieval.py:1"},
+        steps=[
+            _event(
+                0,
+                "retrieve",
+                "fail",
+                anomaly_signals=[
+                    AnomalySignal(
+                        anomaly_id="BA-001",
+                        severity="critical",
+                        suspicion_score=0.9,
+                        reason="structural malformation",
+                        expected_behavior="a list of documents",
+                        observed_behavior="field 'token' = SECRET-observed-xyz",
+                        field_path="docs",
+                    )
+                ],
+                inspection=_inspection(empty_fields=["docs"], message="m"),
+            )
+        ],
+    )
+    scrubbed = build_fix_prompt_for_record(record, sanitized=True).prompt
+    assert "SECRET-observed-xyz" not in scrubbed
+    # The declared expectation is a static threshold, not recorded data.
+    assert "a list of documents" in scrubbed
+
+
+def test_empty_output_dict_is_reported_as_evidence(project: Path) -> None:
+    """`{}` is falsy but is exactly the silent failure being diagnosed."""
+    record = _record(
+        overall_status="silent_failure",
+        first_failure_step="retrieve",
+        root_cause_chain=["retrieve"],
+        node_fn_paths={"retrieve": "src/nodes/retrieval.py:1"},
+        steps=[
+            _event(
+                0,
+                "retrieve",
+                "fail",
+                output_dict={},
+                inspection=_inspection(is_silent_failure=True, message="silent"),
+            )
+        ],
+    )
+    prompt = build_fix_prompt_for_record(record).prompt
+    assert "## Evidence" in prompt
+    assert "empty dict" in prompt
+
+
+def test_degraded_node_points_at_upstream_without_contradiction(project: Path) -> None:
+    """A degraded node cannot be fixed in place — the prompt must not both
+    demand an upstream change and forbid editing other nodes."""
+    prompt = build_fix_prompt_for_record(_cascade_record(), node="summarize").prompt
+
+    done_when = prompt.split("## Done when")[1].split("##")[0]
+    # No success criterion may require another node to change.
+    assert "from `retrieve`" not in done_when
+    # Instead the prompt redirects to the real origin.
+    assert "`summarize` is not where the bug is" in prompt
+    assert "--node retrieve" in prompt
+
+
+def test_missing_field_does_not_name_a_guessed_successor(project: Path) -> None:
+    """missing_fields is a union over all successors, so with a fan-out the
+    specific reader is unknown and must not be asserted."""
+    record = _record(
+        overall_status="silent_failure",
+        first_failure_step="retrieve",
+        root_cause_chain=["retrieve"],
+        graph_node_names=["retrieve", "a", "b"],
+        graph_edge_map={"retrieve": ["a", "b"]},
+        node_fn_paths={"retrieve": "src/nodes/retrieval.py:1"},
+        steps=[
+            _event(
+                0,
+                "retrieve",
+                "fail",
+                output_dict={"other": 1},
+                inspection=_inspection(missing_fields=["summary"], message="m"),
+            )
+        ],
+    )
+    prompt = build_fix_prompt_for_record(record).prompt
+    assert "A later node reads `state['summary']`" in prompt
+    # Must not claim a specific successor needs it.
+    assert "that `a` needs" not in prompt
+    assert "(`a` and `b`) reads" not in prompt
+
+
+def test_truncated_evidence_is_not_fenced_as_json(project: Path) -> None:
+    """A truncated dump is invalid JSON — fencing it as ```json invites the
+    agent to parse it and mistake the failure for the bug."""
+    record = _record(
+        overall_status="silent_failure",
+        first_failure_step="retrieve",
+        root_cause_chain=["retrieve"],
+        node_fn_paths={"retrieve": "src/nodes/retrieval.py:1"},
+        steps=[
+            _event(
+                0,
+                "retrieve",
+                "fail",
+                output_dict={"docs": ["x" * 400, "y" * 400, "z" * 400]},
+                inspection=_inspection(empty_fields=["docs"], message="m"),
+            )
+        ],
+    )
+    prompt = build_fix_prompt_for_record(record).prompt
+    assert "(truncated)" in prompt
+    assert "```json" not in prompt
+    assert "```text" in prompt
+
+
+def test_relative_position_counts_graph_hops_not_chain_entries(project: Path) -> None:
+    """root_cause_chain holds only failing nodes, so its indices are not
+    graph distances."""
+    record = _record(
+        overall_status="crashed",
+        first_failure_step="a",
+        root_cause_chain=["a", "e"],
+        graph_node_names=["a", "b", "c", "d", "e"],
+        graph_edge_map={"a": ["b"], "b": ["c"], "c": ["d"], "d": ["e"]},
+        node_fn_paths={"a": "src/nodes/retrieval.py:1"},
+        steps=[
+            _event(
+                0,
+                "a",
+                "fail",
+                output_dict={"docs": []},
+                inspection=_inspection(empty_fields=["docs"], message="m"),
+            ),
+            _event(4, "e", "crashed", output_dict=None, exception="KeyError: 'docs'"),
+        ],
+    )
+    prompt = build_fix_prompt_for_record(record).prompt
+    # `e` is four hops from `a`, not "immediately after" it.
+    assert "Immediately after" not in prompt
+    assert "4 nodes later" in prompt
 
 
 def test_sanitized_handles_non_string_dict_keys(project: Path) -> None:
