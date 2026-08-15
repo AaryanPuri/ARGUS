@@ -193,18 +193,41 @@ def _find_node_event(record: RunRecord, node_name: str) -> Optional[NodeEvent]:
 
 
 def _find_symptom_event(record: RunRecord, target: str) -> Optional[NodeEvent]:
-    """The node where the failure actually surfaced, if not the target itself."""
-    crashed = [e for e in record.steps if e.status == "crashed"]
-    if crashed:
-        last_crash = max(crashed, key=lambda e: e.step_index)
-        if last_crash.node_name != target:
-            return last_crash
+    """The node where the failure actually surfaced, if not the target itself.
 
-    if record.first_failure_step and record.first_failure_step != target:
+    Only attributes a crash to `target` when the crashed node is actually
+    reachable from it in the graph — an unrelated crash elsewhere in the run
+    (a parallel branch, an unconnected later node) is not evidence of what
+    `target` broke, even if it happens to be the last thing that crashed.
+    """
+    crashed = [e for e in record.steps if e.status == "crashed"]
+    downstream_crashes = [
+        e
+        for e in crashed
+        if e.node_name != target and _is_reachable(record, target, e.node_name)
+    ]
+    if downstream_crashes:
+        return max(downstream_crashes, key=lambda e: e.step_index)
+
+    # Same constraint applies to both fallbacks below: they were written
+    # assuming target is the chain origin, where first_failure_step/chain[-1]
+    # naturally sit downstream. Under a --node override to a non-origin
+    # node, an unconstrained fallback can point *upstream* of target —
+    # exactly the false-exoneration bug the reachability check above exists
+    # to prevent, just via a different path.
+    if (
+        record.first_failure_step
+        and record.first_failure_step != target
+        and _is_reachable(record, target, record.first_failure_step)
+    ):
         return _find_node_event(record, record.first_failure_step)
 
     chain = record.root_cause_chain or []
-    if len(chain) > 1 and chain[-1] != target:
+    if (
+        len(chain) > 1
+        and chain[-1] != target
+        and _is_reachable(record, target, chain[-1])
+    ):
         return _find_node_event(record, chain[-1])
 
     return None
@@ -259,7 +282,12 @@ def _resolve_source(record: RunRecord, node_name: str) -> tuple[Optional[str], s
     if not recorded:
         return None, ""
 
-    file_part, _, line_part = recorded.partition(":")
+    # rsplit on the *last* colon, not partition's first — a Windows absolute
+    # path ("C:\...\file.py:42") has an earlier colon after the drive letter.
+    if ":" in recorded:
+        file_part, line_part = recorded.rsplit(":", 1)
+    else:
+        file_part, line_part = recorded, ""
     if Path(file_part).exists():
         return recorded, ""
 
@@ -287,8 +315,17 @@ def _reanchor(file_part: str) -> Optional[str]:
     name = Path(file_part).name
     if not name.endswith(".py"):
         return None
+
+    # Reuse source_locator's noise-directory list — without it, a repo's own
+    # .venv/node_modules/site-packages can shadow the real match with a
+    # same-named vendored file, or make a genuinely unique match look
+    # ambiguous.
+    from argus.source_locator import _EXCLUDE_DIRS
+
     matches = sorted(
-        p for p in Path.cwd().rglob(name) if ".argus" not in p.parts
+        p
+        for p in Path.cwd().rglob(name)
+        if not (_EXCLUDE_DIRS & set(p.parts))
     )
     if len(matches) != 1:
         return None
@@ -410,7 +447,7 @@ def _describe_shape(value: Any) -> str:
     if isinstance(value, (list, tuple)):
         return f"{type(value).__name__} ({len(value)} items)"
     if isinstance(value, dict):
-        keys = ", ".join(list(value.keys())[:8])
+        keys = ", ".join(str(k) for k in list(value.keys())[:8])
         return f"dict (keys: {keys})" if keys else "dict (empty)"
     return type(value).__name__
 
@@ -422,6 +459,29 @@ def _successors(record: RunRecord, node_name: str) -> list[str]:
     return list((record.graph_edge_map or {}).get(node_name, []))
 
 
+def _is_reachable(record: RunRecord, source: str, dest: str) -> bool:
+    """BFS over graph_edge_map: is `dest` downstream of `source`?
+
+    Without this check, a crash anywhere in the run (an unrelated parallel
+    branch, an unconnected later node) would otherwise look like evidence of
+    what `source` broke.
+    """
+    edges = record.graph_edge_map or {}
+    if not edges:
+        return False
+    seen = {source}
+    queue = list(edges.get(source, []))
+    while queue:
+        node = queue.pop()
+        if node == dest:
+            return True
+        if node in seen:
+            continue
+        seen.add(node)
+        queue.extend(edges.get(node, []))
+    return False
+
+
 def _join_names(names: list[str]) -> str:
     """'`a`', '`a` and `b`', '`a`, `b` and `c`' — reads as prose, not a dump."""
     ticked = [f"`{n}`" for n in names]
@@ -430,12 +490,19 @@ def _join_names(names: list[str]) -> str:
     return ", ".join(ticked[:-1]) + f" and {ticked[-1]}"
 
 
-def _headline(record: RunRecord, target: str, event: NodeEvent) -> str:
+def _headline(
+    record: RunRecord, target: str, event: NodeEvent, *, sanitized: bool
+) -> str:
     """One-line symptom for the title. Most concrete signal wins."""
     insp = event.inspection
 
     if event.status == "crashed" and event.exception:
-        return f"`{target}` raises {_exception_label(event.exception)} and stops the pipeline"
+        label = (
+            _exception_type_name(event.exception)
+            if sanitized
+            else _exception_label(event.exception)
+        )
+        return f"`{target}` raises {label} and stops the pipeline"
 
     if insp is not None:
         critical_tools = [tf for tf in insp.tool_failures if tf.severity == "critical"]
@@ -487,12 +554,31 @@ def _exception_label(exc: str) -> str:
     return last if len(last) <= 120 else last[:120] + "..."
 
 
+def _exception_type_name(exc: str) -> str:
+    """Just the exception class name (e.g. ``KeyError``) — safe to show under
+    ``--sanitized``, unlike the full message, whose argument is frequently
+    the literal value that triggered the exception (``KeyError: '<value>'``,
+    ``ValueError: invalid literal ... '<value>'``)."""
+    lines = [ln.strip() for ln in exc.strip().splitlines() if ln.strip()]
+    if not lines:
+        return "an error"
+    name = lines[-1].split(":", 1)[0].strip()
+    return name or "an error"
+
+
 def _what_went_wrong(
     record: RunRecord,
     target: str,
     event: NodeEvent,
+    *,
+    sanitized: bool,
 ) -> list[str]:
-    """Plain-English paragraphs. No enum names, no signal ids."""
+    """Plain-English paragraphs. No enum names, no signal ids.
+
+    Under --sanitized, none of the free-text fields that can carry a real
+    recorded value (ToolFailure.evidence, FieldMismatch.actual_value_repr,
+    SemanticSignal.evidence) are rendered.
+    """
     paras: list[str] = []
     insp = event.inspection
 
@@ -518,7 +604,7 @@ def _what_went_wrong(
 
     for tf in insp.tool_failures:
         plain = _TOOL_FAILURE_PLAIN.get(tf.failure_type, "the external call failed")
-        detail = f" ({tf.evidence})" if tf.evidence else ""
+        detail = "" if sanitized else (f" ({tf.evidence})" if tf.evidence else "")
         paras.append(
             f"While producing `{tf.field_name}`, {plain}{detail}. The result was "
             "kept and passed on as if the call had succeeded."
@@ -543,14 +629,22 @@ def _what_went_wrong(
         paras.append(f"`{field}` is present in the output but empty.")
 
     for m in insp.type_mismatches:
-        paras.append(
-            f"`{m.field_name}` should be {m.expected_type}, but it is "
-            f"{m.actual_type} ({m.actual_value_repr})."
-        )
+        if sanitized:
+            paras.append(
+                f"`{m.field_name}` should be {m.expected_type}, but it is "
+                f"{m.actual_type}."
+            )
+        else:
+            paras.append(
+                f"`{m.field_name}` should be {m.expected_type}, but it is "
+                f"{m.actual_type} ({m.actual_value_repr})."
+            )
 
     for ss in insp.semantic_signals:
         where = ss.dotted_path or "the output"
-        evidence = f' Example: "{ss.evidence}".' if ss.evidence else ""
+        evidence = (
+            "" if sanitized else (f' Example: "{ss.evidence}".' if ss.evidence else "")
+        )
         paras.append(f"In `{where}`: {ss.description}.{evidence}")
 
     for a in event.anomaly_signals:
@@ -566,15 +660,20 @@ def _done_when(
     target: str,
     event: NodeEvent,
     symptom_event: Optional[NodeEvent],
+    *,
+    sanitized: bool,
 ) -> list[str]:
     """Checkable success conditions. This is what makes the prompt verifiable."""
     conds: list[str] = []
     insp = event.inspection
 
+    def label(exc: str) -> str:
+        return _exception_type_name(exc) if sanitized else _exception_label(exc)
+
     if event.status == "crashed" and event.exception:
         conds.append(
             f"`{target}` runs to completion without raising "
-            f"{_exception_label(event.exception)}."
+            f"{label(event.exception)}."
         )
 
     if insp is not None:
@@ -605,7 +704,7 @@ def _done_when(
     if symptom_event is not None and symptom_event.exception:
         conds.append(
             f"`{symptom_event.node_name}` no longer fails with "
-            f"{_exception_label(symptom_event.exception)}."
+            f"{label(symptom_event.exception)}."
         )
 
     if not conds:
@@ -631,7 +730,7 @@ def _render(
     parts: list[str] = []
 
     # 1 — Objective. First, so it survives truncation in a small context.
-    parts.append(f"# Fix: {_headline(record, target, event)}")
+    parts.append(f"# Fix: {_headline(record, target, event, sanitized=sanitized)}")
 
     # 2 — Location.
     if source_path:
@@ -653,7 +752,7 @@ def _render(
     )
 
     parts.append("## What went wrong")
-    parts.extend(_what_went_wrong(record, target, event))
+    parts.extend(_what_went_wrong(record, target, event, sanitized=sanitized))
 
     # 4 — Evidence.
     evidence = _evidence_section(record, target, event, symptom_event, sanitized)
@@ -664,11 +763,11 @@ def _render(
     # 5 — Causal note. Only when the failure surfaced somewhere else.
     if symptom_event is not None:
         parts.append("## Why this file and not the crash site")
-        parts.extend(_causal_section(record, target, symptom_event))
+        parts.extend(_causal_section(record, target, symptom_event, sanitized=sanitized))
 
     # 6 — Done when.
     parts.append("## Done when")
-    conds = _done_when(record, target, event, symptom_event)
+    conds = _done_when(record, target, event, symptom_event, sanitized=sanitized)
     parts.append("\n".join(f"- {c}" for c in conds))
 
     # 7 — Constraints.
@@ -678,10 +777,17 @@ def _render(
     # 8 — Verify.
     parts.append("## Verify")
     parts.append(f"```bash\nargus replay {record.run_id} {target}\n```")
-    parts.append(
+    verify_note = (
         "This re-runs the pipeline from this node using the recorded input and "
         "reports whether the failure is gone."
     )
+    if not record.node_fn_refs and not record.app_factory_ref:
+        verify_note += (
+            " This run has no stored factory-free replay refs — if the command "
+            "above asks for one, add `--app module.path:factory_fn` (a zero-arg "
+            "callable returning your graph)."
+        )
+    parts.append(verify_note)
 
     return "\n\n".join(parts).rstrip() + "\n"
 
@@ -710,12 +816,24 @@ def _evidence_section(
 
     if event.exception:
         out.append(f"`{target}` raised:")
-        out.append(f"```\n{event.exception.strip()}\n```")
+        if sanitized:
+            out.append(
+                f"`{_exception_type_name(event.exception)}` "
+                "(message omitted — may contain a recorded value)."
+            )
+        else:
+            out.append(f"```\n{event.exception.strip()}\n```")
 
     if symptom_event is not None and symptom_event.exception:
         position = _relative_position(record, target, symptom_event.node_name)
         out.append(f"{position}, `{symptom_event.node_name}` crashed:")
-        out.append(f"```\n{symptom_event.exception.strip()}\n```")
+        if sanitized:
+            out.append(
+                f"`{_exception_type_name(symptom_event.exception)}` "
+                "(message omitted — may contain a recorded value)."
+            )
+        else:
+            out.append(f"```\n{symptom_event.exception.strip()}\n```")
 
     if sanitized:
         out.append(
@@ -741,14 +859,18 @@ def _causal_section(
     record: RunRecord,
     target: str,
     symptom_event: NodeEvent,
+    *,
+    sanitized: bool,
 ) -> list[str]:
     out: list[str] = []
     symptom = symptom_event.node_name
-    symptom_path = (record.node_fn_paths or {}).get(symptom)
+    # Route through the same exists-check/reanchor/note logic used for the
+    # primary target — node_fn_paths is exactly as likely to be stale here.
+    symptom_path, symptom_note = _resolve_source(record, symptom)
     where = f"`{symptom_path}`" if symptom_path else f"the `{symptom}` node"
 
     chain = record.root_cause_chain or []
-    if len(chain) > 1:
+    if len(chain) > 1 and target in chain and symptom in chain:
         narrative = " → ".join(f"`{n}`" for n in chain)
         out.append(
             f"The failure surfaced in {where}, but that is not the bug. It "
@@ -756,18 +878,19 @@ def _causal_section(
         )
     else:
         out.append(f"The failure surfaced in {where}, but that is not the bug.")
+    if symptom_note:
+        out.append(symptom_note)
 
-    do_not_edit = [n for n in chain if n != target]
-    if not do_not_edit and symptom != target:
-        do_not_edit = [symptom]
-    if do_not_edit:
-        names = _join_names(do_not_edit)
-        out.append(
-            f"**Do not edit {names}.** They behave correctly given the input "
-            f"they received. Fix `{target}` only."
-        )
+    # Scoped to the specific symptom node only — not "every other chain
+    # node" (root_cause_chain's ordering isn't guaranteed and doesn't
+    # reliably include the crash site), and not a blanket claim that
+    # everything else in the run is correct.
+    out.append(
+        f"**Do not edit `{symptom}`.** It is behaving correctly given the "
+        f"input it received — the bug is upstream. Fix `{target}` only."
+    )
 
-    if record.correlation and record.correlation.causal_summary:
+    if not sanitized and record.correlation and record.correlation.causal_summary:
         out.append(f"Recorded analysis: {record.correlation.causal_summary}")
 
     return out

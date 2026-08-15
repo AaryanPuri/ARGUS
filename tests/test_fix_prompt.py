@@ -268,16 +268,66 @@ def test_degraded_cascade_targets_origin_not_crash_site(project: Path) -> None:
     assert "src/nodes/retrieval.py:1" in result.prompt
     assert "**Edit this file:** `src/nodes/retrieval.py:1`" in result.prompt
 
-    # The causal section must appear and must forbid editing the symptom.
+    # The causal section must appear and must forbid editing the symptom —
+    # scoped to the actual crash site (`classify`), not a blanket claim
+    # about every other node in the chain (`summarize` never had its own
+    # bug either, but the prompt must not assert that as fact).
     assert "## Why this file and not the crash site" in result.prompt
-    assert "Do not edit" in result.prompt
-    assert "`summarize`" in result.prompt
-    assert "`classify`" in result.prompt
+    assert "**Do not edit `classify`.**" in result.prompt
+    assert "`summarize`" in result.prompt  # still named in the propagation narrative
 
     # The downstream traceback is still shown as evidence.
     assert "KeyError: 'summary'" in result.prompt
     # Rate limiting is described in plain English.
     assert "rate-limited" in result.prompt
+
+
+def test_causal_section_never_exonerates_the_true_root_cause(project: Path) -> None:
+    """--node overriding to a downstream node must not certify an upstream
+    node (possibly the real bug) as 'behaving correctly'."""
+    record = _cascade_record()
+    result = build_fix_prompt_for_record(record, node="classify")
+
+    # classify's own crash is the target now, not a symptom of something
+    # else — there is nothing else to (correctly or incorrectly) blame.
+    assert "## Why this file and not the crash site" not in result.prompt
+    assert "behave correctly" not in result.prompt
+    assert "**Do not edit `retrieve`" not in result.prompt
+
+
+def test_symptom_unrelated_to_target_is_not_attributed(project: Path) -> None:
+    """A crash elsewhere in the run must not be blamed on target's failure
+    unless it is graph-reachable from target."""
+    record = _record(
+        overall_status="silent_failure",
+        first_failure_step="retrieve",
+        root_cause_chain=["retrieve"],
+        graph_node_names=["retrieve", "summarize", "classify", "audit"],
+        graph_edge_map={"retrieve": ["summarize"], "summarize": ["classify"]},
+        node_fn_paths={"retrieve": "src/nodes/retrieval.py:1"},
+        steps=[
+            _event(
+                0,
+                "retrieve",
+                "fail",
+                output_dict={"docs": []},
+                inspection=_inspection(empty_fields=["docs"], message="empty docs"),
+            ),
+            _event(
+                1,
+                "audit",
+                "crashed",
+                output_dict=None,
+                exception="RuntimeError: audit db unreachable",
+            ),
+        ],
+    )
+    prompt = build_fix_prompt_for_record(record).prompt
+    # `audit` is unrelated (not downstream of `retrieve` in graph_edge_map) —
+    # it must not appear as a fabricated symptom/causal claim.
+    assert "## Why this file and not the crash site" not in prompt
+    assert "audit" not in prompt
+    assert "RuntimeError" not in prompt
 
 
 def test_causal_section_omitted_for_single_node_failure(project: Path) -> None:
@@ -358,6 +408,53 @@ def test_path_recorded_from_another_directory_is_reanchored(project: Path) -> No
     assert result.source_path == "src/nodes/retrieval.py:34"
 
 
+def test_windows_drive_letter_path_is_not_mistaken_for_a_missing_colon(
+    project: Path,
+) -> None:
+    """A recorded Windows path has an earlier colon after the drive letter —
+    splitting on the first colon (instead of the last) truncates the path to
+    just "C" and breaks resolution entirely."""
+    record = _record(
+        overall_status="crashed",
+        first_failure_step="retrieve",
+        root_cause_chain=["retrieve"],
+        node_fn_paths={
+            "retrieve": str(project / "src" / "nodes" / "retrieval.py") + ":1"
+        },
+        steps=[
+            _event(0, "retrieve", "crashed", output_dict=None, exception="RuntimeError: boom"),
+        ],
+    )
+    result = build_fix_prompt_for_record(record)
+    # Resolves via the exists() fast path — proves the split kept the whole
+    # file path, line number included, rather than truncating at a colon
+    # embedded earlier in the path (as a Windows drive letter would be).
+    assert result.source_path is not None
+    assert result.source_path.endswith("retrieval.py:1")
+
+
+def test_reanchor_ignores_vendored_copies(project: Path) -> None:
+    """A stale path must not resolve to a same-named file under .venv —
+    _reanchor has to exclude the same noise directories source_locator does."""
+    vendored = project / ".venv" / "lib" / "site-packages" / "retrieval.py"
+    vendored.parent.mkdir(parents=True)
+    vendored.write_text("# not the real file\n")
+
+    record = _record(
+        overall_status="crashed",
+        first_failure_step="retrieve",
+        root_cause_chain=["retrieve"],
+        node_fn_paths={"retrieve": "some/other/checkout/retrieval.py:1"},
+        steps=[
+            _event(0, "retrieve", "crashed", output_dict=None, exception="RuntimeError: boom"),
+        ],
+    )
+    result = build_fix_prompt_for_record(record)
+    # The real project file is the only legitimate match once .venv is
+    # excluded — must not silently point the agent at the vendored copy.
+    assert result.source_path == "src/nodes/retrieval.py:1"
+
+
 # ── 5. --sanitized strips values, keeps diagnostics ───────────────────────────
 
 
@@ -398,6 +495,153 @@ def test_sanitized_reports_shapes_not_contents(project: Path) -> None:
     scrubbed = build_fix_prompt_for_record(record, sanitized=True).prompt
     assert "sk-live-secret-value" not in scrubbed
     assert "list (0 items)" in scrubbed
+
+
+def test_sanitized_does_not_leak_field_mismatch_value(project: Path) -> None:
+    """FieldMismatch.actual_value_repr is a repr of the real recorded value —
+    it must never survive --sanitized, in the headline or the body."""
+    record = _record(
+        overall_status="silent_failure",
+        first_failure_step="retrieve",
+        root_cause_chain=["retrieve"],
+        node_fn_paths={"retrieve": "src/nodes/retrieval.py:1"},
+        steps=[
+            _event(
+                0,
+                "retrieve",
+                "fail",
+                inspection=_inspection(
+                    type_mismatches=[
+                        FieldMismatch(
+                            field_name="api_key",
+                            expected_type="int",
+                            actual_type="str",
+                            actual_value_repr=repr("sk-live-secret-abc123"),
+                        )
+                    ],
+                    message="type mismatch",
+                ),
+            )
+        ],
+    )
+    scrubbed = build_fix_prompt_for_record(record, sanitized=True).prompt
+    assert "sk-live-secret-abc123" not in scrubbed
+    assert "api_key" in scrubbed  # field name is still useful, safe to keep
+
+
+def test_sanitized_does_not_leak_tool_failure_evidence(project: Path) -> None:
+    record = _record(
+        overall_status="silent_failure",
+        first_failure_step="retrieve",
+        root_cause_chain=["retrieve"],
+        node_fn_paths={"retrieve": "src/nodes/retrieval.py:1"},
+        steps=[
+            _event(
+                0,
+                "retrieve",
+                "fail",
+                inspection=_inspection(
+                    has_tool_failure=True,
+                    tool_failures=[
+                        ToolFailure(
+                            failure_type="error_in_data",
+                            field_name="docs",
+                            severity="critical",
+                            evidence="raw response: password=hunter2",
+                        )
+                    ],
+                    message="tool failure",
+                ),
+            )
+        ],
+    )
+    scrubbed = build_fix_prompt_for_record(record, sanitized=True).prompt
+    assert "hunter2" not in scrubbed
+
+
+def test_sanitized_does_not_leak_semantic_signal_evidence(project: Path) -> None:
+    record = _record(
+        overall_status="silent_failure",
+        first_failure_step="retrieve",
+        root_cause_chain=["retrieve"],
+        node_fn_paths={"retrieve": "src/nodes/retrieval.py:1"},
+        steps=[
+            _event(
+                0,
+                "retrieve",
+                "semantic_fail",
+                inspection=_inspection(
+                    semantic_signals=[
+                        SemanticSignal(
+                            sig_id="CM-003",
+                            category="placeholder_outputs",
+                            severity="critical",
+                            description="placeholder text",
+                            field_path=("notes",),
+                            evidence="user SSN 123-45-6789",
+                        )
+                    ],
+                    message="placeholder",
+                ),
+            )
+        ],
+    )
+    scrubbed = build_fix_prompt_for_record(record, sanitized=True).prompt
+    assert "123-45-6789" not in scrubbed
+
+
+def test_sanitized_does_not_leak_exception_message(project: Path) -> None:
+    """A traceback's exception message frequently embeds the literal value
+    that triggered it (KeyError('<value>')) — only the exception type name
+    is safe to show under --sanitized."""
+    record = _record(
+        overall_status="crashed",
+        first_failure_step="retrieve",
+        root_cause_chain=["retrieve"],
+        node_fn_paths={"retrieve": "src/nodes/retrieval.py:1"},
+        steps=[
+            _event(
+                0,
+                "retrieve",
+                "crashed",
+                output_dict=None,
+                exception=(
+                    "Traceback (most recent call last):\n"
+                    "KeyError: 'customer_ssn=123-45-6789'"
+                ),
+            )
+        ],
+    )
+    scrubbed = build_fix_prompt_for_record(record, sanitized=True).prompt
+    assert "123-45-6789" not in scrubbed
+    assert "customer_ssn" not in scrubbed
+    # The exception type itself is still useful and carries no recorded data.
+    assert "KeyError" in scrubbed
+    # The section's own claim must now actually be true.
+    assert "Values omitted" in scrubbed
+
+
+def test_sanitized_handles_non_string_dict_keys(project: Path) -> None:
+    """A state value that's a dict with non-string keys (e.g. an int-indexed
+    mapping) must not crash --sanitized rendering."""
+    record = _record(
+        overall_status="silent_failure",
+        first_failure_step="retrieve",
+        root_cause_chain=["retrieve"],
+        node_fn_paths={"retrieve": "src/nodes/retrieval.py:1"},
+        steps=[
+            _event(
+                0,
+                "retrieve",
+                "fail",
+                output_dict={"scores": {0: 0.9, 1: 0.5}},
+                inspection=_inspection(empty_fields=["scores"], message="empty"),
+            )
+        ],
+    )
+    # Must not raise.
+    scrubbed = build_fix_prompt_for_record(record, sanitized=True).prompt
+    assert "dict" in scrubbed
 
 
 # ── 6. --node override ────────────────────────────────────────────────────────
