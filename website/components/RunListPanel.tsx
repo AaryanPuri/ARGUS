@@ -2,8 +2,9 @@
 
 import { useMemo, useState, useRef } from 'react'
 import { cn } from '@/lib/utils'
-import { useSearch } from '@/lib/hooks'
+import { useSearch, useServingInfo } from '@/lib/hooks'
 import { RunStatusBadge } from '@/components/StatusBadge'
+import EmptyRunsState from '@/components/EmptyRunsState'
 import type { RunSummary, RunStatus } from '@/lib/types'
 import {
   ChevronRight,
@@ -141,6 +142,7 @@ export default function RunListPanel({
   const [aliasValue, setAliasValue] = useState('')
   const [aliases, setAliases] = useState<Record<string, string>>({})
   const renameRef = useRef<HTMLInputElement>(null)
+  const serving = useServingInfo()
 
   // Filter & search
   const searchResults = useSearch(runs, searchQuery)
@@ -210,6 +212,11 @@ export default function RunListPanel({
             <span className="text-success">{counts.clean} clean</span>{' \u00b7 '}
             <span className="text-destructive">{counts.failed} failed</span>
           </p>
+          {serving?.runs_dir && (
+            <p className="mt-0.5 font-mono text-[11px] text-muted-foreground/70 break-all">
+              serving {serving.runs_dir}
+            </p>
+          )}
         </div>
         <div className="flex items-center gap-2">
           <button className="inline-flex items-center gap-1.5 rounded-md border border-border bg-card px-3 py-1.5 text-sm font-medium text-foreground transition-colors hover:bg-muted">
@@ -265,6 +272,10 @@ export default function RunListPanel({
 
           {/* ── Grid table ──────────────────────────────────────── */}
           <div className="overflow-hidden rounded-xl border border-border bg-card">
+            {!loading && runs.length === 0 ? (
+              <EmptyRunsState serving={serving} />
+            ) : (
+              <>
             {/* Header row */}
             <div className="grid grid-cols-[1.6fr_0.9fr_1.1fr_0.8fr_0.7fr_0.4fr] items-center gap-4 border-b border-border bg-muted/30 px-4 py-2.5 text-[11px] font-medium uppercase tracking-wider text-muted-foreground">
               <span>Run</span>
@@ -440,10 +451,12 @@ export default function RunListPanel({
               </ul>
             )}
 
-            {!loading && filteredRuns.length === 0 && (
+            {!loading && filteredRuns.length === 0 && runs.length > 0 && (
               <p className="py-12 text-center text-sm text-muted-foreground">
                 No runs match this filter.
               </p>
+            )}
+              </>
             )}
           </div>
         </div>

@@ -4,6 +4,8 @@ import type { RunSummary } from '@/lib/types'
 import { RunStatusBadge } from './StatusBadge'
 import EvalBadge from './EvalBadge'
 import type { EvalState } from './EvaluationBuilder'
+import EmptyRunsState from './EmptyRunsState'
+import { useServingInfo } from '@/lib/hooks'
 
 function getRunShape(run: RunSummary): { label: string; color: string } | null {
   if (run.overall_status === 'clean' && !run.first_failure_step) {
@@ -57,24 +59,9 @@ const COL_HEADER_STYLE: React.CSSProperties = {
 }
 
 export default function RunTable({ runs, evalState }: RunTableProps) {
+  const serving = useServingInfo()
   if (runs.length === 0) {
-    return (
-      <div className="text-center py-24" style={{ color: 'var(--text-muted)' }}>
-        <div
-          className="mx-auto mb-5 w-12 h-12 rounded-xl flex items-center justify-center"
-          style={{ background: 'var(--bg-elevated)' }}
-        >
-          <svg width="20" height="20" viewBox="0 0 18 18" fill="none">
-            <path d="M9 1.5L16.5 5.5V12.5L9 16.5L1.5 12.5V5.5L9 1.5Z" stroke="#3a3f4c" strokeWidth="1.2" fill="none"/>
-            <circle cx="9" cy="9" r="2" stroke="#3a3f4c" strokeWidth="1"/>
-          </svg>
-        </div>
-        <div className="text-sm font-medium" style={{ color: 'var(--text-secondary)' }}>No runs found</div>
-        <div className="text-[13px] mt-1.5" style={{ color: 'var(--text-muted)' }}>
-          Run a pipeline with ARGUS watching to see results here.
-        </div>
-      </div>
-    )
+    return <EmptyRunsState serving={serving} />
   }
 
   return (

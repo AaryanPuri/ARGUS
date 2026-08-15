@@ -50,10 +50,10 @@ Defaults are heuristics-first: semantic_judge is off. record_http and persist_st
 Only add extra kwargs if needed (redact_keys, validators, strict=True). Do not add a large config block by default.
 
 After running the pipeline:
+  argus show last         # first aha is in the terminal if something is wrong
   argus list              # see all recorded runs
-  argus show last         # inspect the most recent run
   argus show <id>         # inspect a specific run by ID
-  argus ui                # open the web dashboard
+  argus ui                # open the web dashboard (empty table = wrong dir or no runs yet)
 
 After the first run, the dashboard may suggest type hints to catch field-drop bugs. That is optional follow-up, not part of this integration.`
 
@@ -108,14 +108,15 @@ export default function GuideContent() {
         </div>
 
         <div className="space-y-5 mb-8">
-          <Step n={4} title="Run your pipeline" text="Execute your LangGraph / LangChain pipeline as usual. ARGUS captures the run automatically." />
-          <Step n={5} title="Inspect the run" text="Run argus show last or argus ui. The agent should read .argus/runs/<id>.json rather than guessing from terminal logs." />
+          <Step n={4} title="Run your pipeline" text="Execute your LangGraph / LangChain pipeline as usual. ARGUS captures the run automatically. If something is wrong, a short [argus] finding prints in the terminal — clean runs stay silent. You do not need the dashboard for the first aha." />
+          <Step n={5} title="Inspect the run" text="Run argus show last in the terminal, or argus ui for the dashboard. The agent should read .argus/runs/<id>.json rather than guessing from terminal logs. If the dashboard table is empty, you opened it too early or from the wrong directory — the empty state shows which .argus/runs path is being served." />
         </div>
 
         <h3 className="text-sm font-semibold uppercase tracking-widest text-muted-foreground mb-4">After setup</h3>
         <div className="space-y-3 mb-6">
-          <Row label="RUN PIPELINE" text="Run your LangGraph pipeline normally in the terminal." />
-          <Row label="CHECK DASHBOARD" text="Takes 1-2 seconds — refresh the page if a new run doesn't appear immediately." />
+          <Row label="RUN PIPELINE" text="Run your LangGraph pipeline normally. A finding prints in the terminal when something is wrong; clean runs stay silent." />
+          <Row label="CHECK TERMINAL" text="argus show last — no browser needed. Then argus ui if you want the dashboard." />
+          <Row label="EMPTY DASHBOARD" text="If the table is empty, the UI is serving a different .argus or you opened it before the first run. Check cwd vs project root." />
         </div>
       </section>
 
@@ -148,6 +149,9 @@ export default function GuideContent() {
         <p className="text-[15px] text-muted-foreground leading-[1.7] mb-6">
           Starts a local server on port 7842 and opens the dashboard in your browser.
           Press <Code>Ctrl+C</Code> in the terminal to stop it.
+          If the runs table is empty, ARGUS shows which <Code>.argus/runs</Code> path it is serving —
+          run the graph first, try <Code>argus show last</Code>, or start the UI from the project root
+          (cwd vs git / pyproject / <Code>$ARGUS_DIR</Code>).
         </p>
 
         <h3 className="text-sm font-semibold uppercase tracking-widest text-muted-foreground mb-4">Replay &amp; compare</h3>
@@ -204,6 +208,9 @@ export default function GuideContent() {
         <h2 className="text-xl font-semibold text-foreground mb-3">Runs List</h2>
         <p className="text-[15px] text-muted-foreground leading-[1.7] mb-6">
           Your pipeline execution history. Every run with ARGUS attached shows up here automatically.
+          An empty table means this UI is reading a different <Code>.argus</Code> than the project
+          that just ran, or you have not invoked the graph yet — use <Code>argus show last</Code>
+          and check cwd vs project root.
         </p>
 
         <div className="rounded-lg overflow-hidden mb-8" style={{ border: '1px solid var(--border)' }}>

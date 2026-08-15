@@ -160,3 +160,26 @@ export function useSearch(runs: RunSummary[], query: string): RunSummary[] {
     r.graph_node_names.some((n) => n.toLowerCase().includes(q))
   )
 }
+
+/* ── useServingInfo ─────────────────────────────────────────────── */
+
+export interface ServingInfo {
+  project_root: string
+  runs_dir: string
+  cwd?: string
+}
+
+export function useServingInfo(): ServingInfo | null {
+  const [serving, setServing] = useState<ServingInfo | null>(null)
+
+  useEffect(() => {
+    fetch('/api/serving')
+      .then((r) => (r.ok ? r.json() : null))
+      .then((data: ServingInfo | null) => {
+        if (data && data.runs_dir) setServing(data)
+      })
+      .catch(() => {})
+  }, [])
+
+  return serving
+}

@@ -819,6 +819,7 @@ def _make_handler(
                     {
                         "project_root": str(_project_dir),
                         "runs_dir": str(runs_dir),
+                        "cwd": str(Path.cwd()),
                     }
                 )
             elif path == "/api/doctor":

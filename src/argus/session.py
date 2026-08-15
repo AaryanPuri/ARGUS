@@ -1387,6 +1387,15 @@ class ArgusSession:
         except Exception:
             pass
 
+        # Terminal finding — silent on clean runs (VAR-110). Printed before
+        # the optional LLM investigation so the aha is not delayed.
+        try:
+            from argus.findings import print_run_finding  # noqa: PLC0415
+
+            print_run_finding(record)
+        except Exception:
+            pass
+
         # Consolidated per-run LLM call: investigation (absorbs correlation
         # augmentation and loop analysis — one call with full context)
         if self._llm_investigation_config and self._llm_investigation_config.enabled:

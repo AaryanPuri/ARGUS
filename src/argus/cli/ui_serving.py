@@ -24,8 +24,9 @@ def format_ui_startup_lines(runs_dir: Path, run_count: int) -> list[str]:
     ]
     if run_count == 0:
         lines.append(
-            "warning: 0 runs found. Invoke a graph with watcher.attach() first, "
-            "or check $ARGUS_DIR / project root if you ran from another directory."
+            "warning: 0 runs found under this .argus. Run the graph with "
+            "watcher.attach() first, then argus show last. If you already ran: "
+            "check cwd vs project root, or $ARGUS_DIR."
         )
     return lines
 

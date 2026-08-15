@@ -159,6 +159,8 @@ def test_ui_startup_mentions_runs_dir_and_warns_when_empty(tmp_path):
     text = "\n".join(format_ui_startup_lines(runs_dir, run_count=0))
     assert str(runs_dir) in text
     assert "0 runs" in text.lower() or "no runs" in text.lower()
+    assert "argus show last" in text.lower()
+    assert "cwd" in text.lower() or "project root" in text.lower()
 
     filled = "\n".join(format_ui_startup_lines(runs_dir, run_count=3))
     assert str(runs_dir) in filled

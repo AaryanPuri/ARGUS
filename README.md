@@ -40,15 +40,24 @@ Ask your agent to wire ARGUS in (the skill loads on LangGraph / pipeline-failed 
 
 **4. Run your pipeline**
 
-Same as always. ARGUS watches in the background and saves the run.
+Same as always. ARGUS watches in the background and saves the run. If something is wrong, a short finding prints in the terminal — you do not need the dashboard for the first aha:
 
-**5. See what it caught**
+```
+[argus] run 8f3a1c02  silent_failure on retrieve
+        missing: documents  (dropped by search)
+        argus show last   |  argus ui
+```
+
+Clean runs stay silent.
+
+**5. Inspect**
 
 ```bash
-argus ui
-# or
-argus show last
+argus show last    # terminal, no browser
+argus ui           # dashboard at localhost:7842
 ```
+
+If `argus ui` shows an empty table, it is usually the wrong directory or you opened it before the first run. The empty state lists the `.argus/runs` path being served — run the graph from the project root, or `argus show last` to confirm runs exist. Check cwd vs git/pyproject root (or `$ARGUS_DIR`).
 
 **Optional — smarter detection**
 
@@ -255,6 +264,8 @@ argus ui    # opens at localhost:7842
 ```
 
 Shows all runs, node-level detail, AI analysis, replay diffs, loop iteration badges, and comparison views. No account needed for local use.
+
+If the table is empty, the UI is serving a different `.argus` than the project that just ran, or there are no runs yet. The empty state shows the path ARGUS is reading and what to do (`argus show last`, run the graph, check cwd vs project root).
 
 - **Distinct failure colors** — crashed (red), silent failure (amber), semantic fail (purple), degraded input (orange), skipped (gray)
 - **Evidence audit trail** — see exactly which signals the LLM judge considered and which it overrode
