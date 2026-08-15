@@ -24,17 +24,25 @@ pip install argus-agents
 
 CLI, LangGraph adapter, and UI. Fully local. Package name is **`argus-agents`**, not `argus`.
 
-**2. Paste the AI setup prompt**
+**2. Write project skills**
 
-Go to [arguslabs.in](https://arguslabs.in), copy **AI Setup Prompt**, paste it into Cursor / Claude / ChatGPT. It wires `attach()` into your graph.
+```bash
+argus init
+```
+
+Writes Cursor and Claude skills (`.cursor/skills/argus-debug/` and `.claude/skills/argus-debug/`). Commit them. Later chats already know ARGUS exists, that runs live in `.argus/runs/<id>.json`, and to **read that JSON instead of guessing from logs**.
+
+**3. Attach ARGUS**
+
+Ask your agent to wire ARGUS in (the skill loads on LangGraph / pipeline-failed questions), or paste the [AI Setup Prompt](https://arguslabs.in) once. Happy path: `ArgusWatcher.attach(graph)` — heuristics on, judge off, no login, no TypedDict rewrite.
 
 <img src="https://github.com/VaradDurge/ARGUS/blob/master/assets/Argus%20Guidelines%20and%20Contribution.png?raw=true" width="700"/>
 
-**3. Run your pipeline**
+**4. Run your pipeline**
 
 Same as always. ARGUS watches in the background and saves the run.
 
-**4. See what it caught**
+**5. See what it caught**
 
 ```bash
 argus ui

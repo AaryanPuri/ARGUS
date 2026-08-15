@@ -18,6 +18,7 @@ except ImportError:
 
 from argus.cli.cmd_diff import diff_runs
 from argus.cli.cmd_doctor import doctor
+from argus.cli.cmd_init import init_skills_cmd
 from argus.cli.cmd_key import key_clear, key_set, key_show, key_use
 from argus.cli.cmd_locate import locate_sources
 from argus.cli.cmd_login import login, logout, whoami
@@ -81,6 +82,7 @@ def cmd_key_clear(
     """Remove one provider's key, or all saved keys."""
     key_clear(provider)
 
+
 _console = Console()
 
 _WORDMARK = [
@@ -90,6 +92,7 @@ _WORDMARK = [
 ]
 
 _SETUP_LINES = [
+    ("argus init", "# write Cursor + Claude project skills (commit them)"),
     ("argus key set <openai-key>", "# optional: enable AI-powered detection (BYOK)"),
     ("from argus import ArgusWatcher", ""),
     ("watcher = ArgusWatcher()", ""),
@@ -98,6 +101,7 @@ _SETUP_LINES = [
 ]
 
 _COMMANDS = [
+    ("init", "write Cursor and Claude project skills for the debug loop"),
     ("ui", "start the web dashboard and open it in browser"),
     ("list", "list all recorded runs, newest first"),
     ("show", "inspect the most recent run"),
@@ -408,6 +412,17 @@ def cmd_whoami() -> None:
 def cmd_update() -> None:
     """Check GitHub for a newer release and upgrade if one is available."""
     check_for_update()
+
+
+@app.command("init")
+def cmd_init(
+    force: Annotated[
+        bool,
+        typer.Option("--force", "-f", help="Overwrite existing ARGUS skill files."),
+    ] = False,
+) -> None:
+    """Write Cursor and Claude project skills for the ARGUS debug loop."""
+    init_skills_cmd(force=force)
 
 
 @app.command("doctor")
