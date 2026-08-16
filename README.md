@@ -55,6 +55,7 @@ Same as always. Failures print in the terminal; clean runs stay silent.
 
 ```bash
 argus show last
+argus fix <id>     # paste-ready prompt for the root-cause node
 argus ui
 ```
 
@@ -235,6 +236,7 @@ argus list                           # all recorded runs
 argus show last                      # most recent run
 argus show <id>                      # inspect a specific run
 argus inspect <id> --step <node>     # dump raw input/output for a node
+argus fix <id>                       # fix prompt for the root cause, ready to paste
 argus replay <id> <node>             # re-run from a node
 argus diff <id-a> <id-b>             # compare two runs
 argus stats                          # signature hit stats, disable/enable/dispute signatures
