@@ -49,12 +49,9 @@ _STATUS_PLAIN = {
     "crashed": "raised an error and stopped",
     "fail": "produced output missing fields the next node requires",
     "degraded_input": (
-        "ran with incomplete input because an earlier node did not produce "
-        "a field it needed"
+        "ran with incomplete input because an earlier node did not produce a field it needed"
     ),
-    "semantic_fail": (
-        "produced output that looks structurally correct but is wrong in content"
-    ),
+    "semantic_fail": ("produced output that looks structurally correct but is wrong in content"),
     "interrupted": "was interrupted before it finished",
     "pass": "completed without an error being raised",
     "retried": "was retried",
@@ -123,9 +120,7 @@ def build_fix_prompt_for_record(
     event = _find_node_event(record, target)
 
     if event is None:
-        raise FixPromptError(
-            f"Node '{target}' has no recorded step in run {record.run_id}."
-        )
+        raise FixPromptError(f"Node '{target}' has no recorded step in run {record.run_id}.")
 
     if not _has_failure_signal(event):
         raise FixPromptError(
@@ -156,19 +151,17 @@ def build_fix_prompt_for_record(
 def _resolve_target_node(record: RunRecord, node: Optional[str]) -> str:
     """Explicit node → root-cause origin → first failing step."""
     if node:
-        known = set(record.graph_node_names or []) | {
-            e.node_name for e in record.steps
-        }
+        known = set(record.graph_node_names or []) | {e.node_name for e in record.steps}
         if node not in known:
             available = ", ".join(sorted(known)) or "(none recorded)"
             raise FixPromptError(
-                f"Node '{node}' is not part of run {record.run_id}. "
-                f"Available nodes: {available}"
+                f"Node '{node}' is not part of run {record.run_id}. Available nodes: {available}"
             )
         return node
 
-    # root_cause_chain is built by walking backward to the origin and is stored
-    # in chronological order of first occurrence — chain[0] is the origin.
+    # chain[0] is the inspector origin (chronological walk) and, after
+    # correlation overwrites the field with degradation_origins, the
+    # highest-confidence onset. Either way it is the node to fix.
     if record.root_cause_chain:
         return record.root_cause_chain[0]
 
@@ -204,19 +197,18 @@ def _find_symptom_event(record: RunRecord, target: str) -> Optional[NodeEvent]:
     """
     crashed = [e for e in record.steps if e.status == "crashed"]
     downstream_crashes = [
-        e
-        for e in crashed
-        if e.node_name != target and _is_reachable(record, target, e.node_name)
+        e for e in crashed if e.node_name != target and _is_reachable(record, target, e.node_name)
     ]
     if downstream_crashes:
         return max(downstream_crashes, key=lambda e: e.step_index)
 
     # Same constraint applies to both fallbacks below: they were written
-    # assuming target is the chain origin, where first_failure_step/chain[-1]
-    # naturally sit downstream. Under a --node override to a non-origin
-    # node, an unconstrained fallback can point *upstream* of target —
-    # exactly the false-exoneration bug the reachability check above exists
-    # to prevent, just via a different path.
+    # assuming target is the chain origin, where first_failure_step / the
+    # last hop of a real propagation path naturally sit downstream. Under
+    # a --node override to a non-origin node, an unconstrained fallback
+    # can point *upstream* of target — exactly the false-exoneration bug
+    # the reachability check above exists to prevent, just via a
+    # different path.
     if (
         record.first_failure_step
         and record.first_failure_step != target
@@ -224,15 +216,55 @@ def _find_symptom_event(record: RunRecord, target: str) -> Optional[NodeEvent]:
     ):
         return _find_node_event(record, record.first_failure_step)
 
-    chain = record.root_cause_chain or []
-    if (
-        len(chain) > 1
-        and chain[-1] != target
-        and _is_reachable(record, target, chain[-1])
-    ):
-        return _find_node_event(record, chain[-1])
+    path = _propagation_nodes(record, target)
+    if len(path) > 1 and path[-1] != target and _is_reachable(record, target, path[-1]):
+        return _find_node_event(record, path[-1])
 
     return None
+
+
+# session.py overwrites root_cause_chain with degradation_origins only
+# when the top origin's confidence is at least this. Must stay in sync.
+_CORRELATION_CHAIN_OVERRIDE_MIN = 0.8
+
+
+def _chain_is_ranked_origins(record: RunRecord) -> bool:
+    """True when root_cause_chain is confidence-ranked onsets, not a path.
+
+    ``session.py`` replaces the inspector walk with
+    ``[o.node_name for o in correlation.degradation_origins]`` once the
+    top origin is high-confidence. Those names are independent onset
+    candidates — using the last one as the crash site, or joining them
+    with ``→``, invents a propagation that was never recorded.
+    """
+    corr = record.correlation
+    if corr is None or not corr.degradation_origins:
+        return False
+    if corr.degradation_origins[0].confidence < _CORRELATION_CHAIN_OVERRIDE_MIN:
+        return False
+    return list(record.root_cause_chain or []) == [o.node_name for o in corr.degradation_origins]
+
+
+def _propagation_nodes(record: RunRecord, target: str) -> list[str]:
+    """Origin→symptom node list, or empty when we only have ranked onsets."""
+    if not _chain_is_ranked_origins(record):
+        return list(record.root_cause_chain or [])
+
+    corr = record.correlation
+    if corr is None:
+        return []
+
+    matching = [
+        list(chain.nodes)
+        for chain in corr.propagation_chains
+        if target in chain.nodes and len(chain.nodes) > 1
+    ]
+    if not matching:
+        return []
+    for nodes in matching:
+        if nodes[0] == target:
+            return nodes
+    return matching[0]
 
 
 def _has_failure_signal(event: NodeEvent) -> bool:
@@ -364,9 +396,7 @@ def _reanchor(file_part: str) -> Optional[str]:
         # Mirror source_locator's walk rule: its named excludes *and* every
         # dot-directory (.pytest_cache, .direnv, .cache, ...), not just the
         # ones that happen to be listed.
-        return any(
-            part in _EXCLUDE_DIRS or part.startswith(".") for part in parts[:-1]
-        )
+        return any(part in _EXCLUDE_DIRS or part.startswith(".") for part in parts[:-1])
 
     matches = sorted(
         p for p in Path.cwd().rglob(name) if not _is_noise(p.relative_to(Path.cwd()).parts)
@@ -578,9 +608,7 @@ def _join_names(names: list[str]) -> str:
     return ", ".join(ticked[:-1]) + f" and {ticked[-1]}"
 
 
-def _headline(
-    record: RunRecord, target: str, event: NodeEvent, *, sanitized: bool
-) -> str:
+def _headline(record: RunRecord, target: str, event: NodeEvent, *, sanitized: bool) -> str:
     """One-line symptom for the title. Most concrete signal wins."""
     insp = event.inspection
 
@@ -602,10 +630,7 @@ def _headline(
             succ = _successors(record, target)
             field = _inline(insp.missing_fields[0], 80)
             if len(succ) == 1:
-                return (
-                    f"`{target}` does not produce the `{field}` field that "
-                    f"`{succ[0]}` needs"
-                )
+                return f"`{target}` does not produce the `{field}` field that `{succ[0]}` needs"
             return f"`{target}` does not produce the `{field}` field"
         if insp.empty_fields:
             return f"`{target}` produces an empty `{_inline(insp.empty_fields[0], 80)}`"
@@ -691,9 +716,8 @@ def _what_went_wrong(
     insp = event.inspection
 
     if event.status == "crashed":
-        paras.append(
-            f"`{target}` raised an error and stopped. The traceback is below."
-        )
+        below = "The exception type is below." if sanitized else "The traceback is below."
+        paras.append(f"`{target}` raised an error and stopped. {below}")
     elif event.status == "degraded_input" and insp is not None:
         upstream = insp.degraded_upstream_node or "an earlier node"
         fields = ", ".join(f"`{_inline(f, 80)}`" for f in insp.degraded_fields) or "a field"
@@ -703,18 +727,14 @@ def _what_went_wrong(
             "incomplete input."
         )
     else:
-        paras.append(
-            f"`{target}` ran without raising an error, but its output is wrong."
-        )
+        paras.append(f"`{target}` ran without raising an error, but its output is wrong.")
 
     if insp is None:
         return paras
 
     for tf in insp.tool_failures:
         plain = _TOOL_FAILURE_PLAIN.get(tf.failure_type, "the external call failed")
-        detail = (
-            "" if sanitized else (f" ({_inline(tf.evidence)})" if tf.evidence else "")
-        )
+        detail = "" if sanitized else (f" ({_inline(tf.evidence)})" if tf.evidence else "")
         paras.append(
             f"While producing `{_inline(tf.field_name, 80)}`, {plain}{detail}. The "
             "result was kept and passed on as if the call had succeeded."
@@ -761,9 +781,7 @@ def _what_went_wrong(
     for ss in insp.semantic_signals:
         where = _inline(ss.dotted_path, 80) or "the output"
         evidence = (
-            ""
-            if sanitized
-            else (f' Example: "{_inline(ss.evidence)}".' if ss.evidence else "")
+            "" if sanitized else (f' Example: "{_inline(ss.evidence)}".' if ss.evidence else "")
         )
         paras.append(f"In `{where}`: {_inline(ss.description)}.{evidence}")
 
@@ -775,9 +793,7 @@ def _what_went_wrong(
         if sanitized:
             paras.append(f"Expected {expected}, but the output did not match.")
         else:
-            paras.append(
-                f"Expected {expected}, but observed {_inline(a.observed_behavior)}."
-            )
+            paras.append(f"Expected {expected}, but observed {_inline(a.observed_behavior)}.")
 
     return paras
 
@@ -798,39 +814,26 @@ def _done_when(
         return _exception_type_name(exc) if sanitized else _exception_label(exc)
 
     if event.status == "crashed" and event.exception:
-        conds.append(
-            f"`{target}` runs to completion without raising "
-            f"{label(event.exception)}."
-        )
+        conds.append(f"`{target}` runs to completion without raising {label(event.exception)}.")
 
     if insp is not None:
         for tf in insp.tool_failures:
-            plain = _TOOL_FAILURE_CONDITION.get(
-                tf.failure_type, "the external call fails"
-            )
+            plain = _TOOL_FAILURE_CONDITION.get(tf.failure_type, "the external call fails")
             conds.append(
                 f"When {plain}, `{target}` either raises or retries — it never "
                 f"returns `{_inline(tf.field_name, 80)}` as a successful empty result."
             )
         for field in insp.missing_fields:
-            conds.append(
-                f"`{target}`'s output dict contains a `{_inline(field, 80)}` key."
-            )
+            conds.append(f"`{target}`'s output dict contains a `{_inline(field, 80)}` key.")
         for field in insp.empty_fields:
-            conds.append(
-                f"`{target}`'s `{_inline(field, 80)}` value is non-empty."
-            )
+            conds.append(f"`{target}`'s `{_inline(field, 80)}` value is non-empty.")
         for m in insp.type_mismatches:
-            conds.append(
-                f"`{_inline(m.field_name, 80)}` is {_inline(m.expected_type, 60)}."
-            )
+            conds.append(f"`{_inline(m.field_name, 80)}` is {_inline(m.expected_type, 60)}.")
         for ss in insp.semantic_signals:
             where = _inline(ss.dotted_path, 80) or "the output"
             # ss.description is registry prose; the raw category slug is an
             # internal enum and reads as broken grammar in a success criterion.
-            conds.append(
-                f"`{where}` no longer shows this problem: {_inline(ss.description)}."
-            )
+            conds.append(f"`{where}` no longer shows this problem: {_inline(ss.description)}.")
         # NOTE: degraded_fields deliberately produces no condition here. The
         # fix for a degraded node is in the upstream node that failed to
         # produce the field — but Constraints forbids editing other nodes, so
@@ -840,8 +843,7 @@ def _done_when(
 
     if symptom_event is not None and symptom_event.exception:
         conds.append(
-            f"`{symptom_event.node_name}` no longer fails with "
-            f"{label(symptom_event.exception)}."
+            f"`{symptom_event.node_name}` no longer fails with {label(symptom_event.exception)}."
         )
 
     if not conds:
@@ -1059,9 +1061,9 @@ def _causal_section(
     symptom_path, symptom_note = _resolve_source(record, symptom, source_cache)
     where = f"`{symptom_path}`" if symptom_path else f"the `{symptom}` node"
 
-    chain = record.root_cause_chain or []
-    if len(chain) > 1 and target in chain and symptom in chain:
-        narrative = " → ".join(f"`{n}`" for n in chain)
+    path = _propagation_nodes(record, target)
+    if len(path) > 1 and target in path and symptom in path:
+        narrative = " → ".join(f"`{n}`" for n in path)
         out.append(
             f"The failure surfaced in {where}, but that is not the bug. It "
             f"propagated: {narrative}."
@@ -1092,9 +1094,7 @@ def _constraints(
     symptom_event: Optional[NodeEvent],
 ) -> list[str]:
     lines = [f"- Change only the `{target}` node's function."]
-    lines.append(
-        "- Do not change the pipeline's state schema, key names, or the graph wiring."
-    )
+    lines.append("- Do not change the pipeline's state schema, key names, or the graph wiring.")
     lines.append("- Do not edit other node functions.")
     if symptom_event is not None:
         lines.append(
