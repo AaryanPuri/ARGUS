@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import re
 from pathlib import Path
 
 import pytest
@@ -129,7 +130,9 @@ def test_cli_init_help_and_write(tmp_path, monkeypatch):
     runner = CliRunner()
     help_result = runner.invoke(app, ["init", "--help"])
     assert help_result.exit_code == 0, help_result.output
-    assert "--force" in help_result.output
+    # Rich help wraps / colorizes on CI (80-col Linux); strip ANSI and newlines.
+    help_plain = re.sub(r"\x1b\[[0-9;]*m", "", help_result.output).replace("\n", "")
+    assert "--force" in help_plain
 
     result = runner.invoke(app, ["init"])
     assert result.exit_code == 0, result.output
