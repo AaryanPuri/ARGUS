@@ -17,9 +17,12 @@ from argus.fix_prompt import (
 )
 from argus.models import (
     AnomalySignal,
+    CorrelationReport,
+    DegradationOrigin,
     FieldMismatch,
     InspectionResult,
     NodeEvent,
+    PropagationChain,
     RunRecord,
     SemanticSignal,
     ToolFailure,
@@ -284,6 +287,161 @@ def test_degraded_cascade_targets_origin_not_crash_site(project: Path) -> None:
     assert "rate-limited" in result.prompt
 
 
+def test_ranked_origins_are_not_treated_as_a_propagation_path(project: Path) -> None:
+    """After correlation, root_cause_chain is confidence-ranked onsets.
+
+    The last name is another independent onset, not the crash site — using
+    it as the symptom (or joining the list with →) invents a cascade.
+    """
+    record = _record(
+        overall_status="silent_failure",
+        first_failure_step="retrieve",
+        root_cause_chain=["retrieve", "summarize"],
+        node_fn_paths={"retrieve": "src/nodes/retrieval.py:1"},
+        correlation=CorrelationReport(
+            run_id="a1b2c3d4e5f6",
+            degradation_origins=[
+                DegradationOrigin(
+                    node_name="retrieve",
+                    step_index=0,
+                    signal_types=("tool_failure",),
+                    confidence=0.95,
+                    reason="empty docs",
+                ),
+                DegradationOrigin(
+                    node_name="summarize",
+                    step_index=1,
+                    signal_types=("semantic_fail",),
+                    confidence=0.85,
+                    reason="placeholder summary",
+                ),
+            ],
+            propagation_chains=[],
+            causal_summary="Two independent onsets.",
+            timeline=[],
+        ),
+        steps=[
+            _event(
+                0,
+                "retrieve",
+                "fail",
+                output_dict={"docs": []},
+                inspection=_inspection(
+                    empty_fields=["docs"],
+                    has_tool_failure=True,
+                    tool_failures=[
+                        ToolFailure(
+                            failure_type="empty_result",
+                            field_name="docs",
+                            severity="critical",
+                            evidence="no hits",
+                        )
+                    ],
+                    message="empty docs",
+                ),
+            ),
+            _event(
+                1,
+                "summarize",
+                "semantic_fail",
+                output_dict={"summary": "lorem ipsum"},
+                inspection=_inspection(message="placeholder"),
+            ),
+            _event(2, "classify", "pass", output_dict={"label": "ok"}),
+        ],
+    )
+    result = build_fix_prompt_for_record(record)
+
+    assert result.node == "retrieve"
+    assert "It propagated:" not in result.prompt
+    assert "**Do not edit `summarize`.**" not in result.prompt
+    assert "## Why this file and not the crash site" not in result.prompt
+
+
+def test_low_confidence_origins_keep_the_inspector_path(project: Path) -> None:
+    """session.py only overwrites the chain at confidence >= 0.8.
+
+    Below that the inspector walk is still the path, even if the origin
+    names happen to match — do not drop the → narrative.
+    """
+    record = _cascade_record()
+    record.correlation = CorrelationReport(
+        run_id=record.run_id,
+        degradation_origins=[
+            DegradationOrigin(
+                node_name="retrieve",
+                step_index=0,
+                signal_types=("tool_failure",),
+                confidence=0.79,
+                reason="maybe retrieve",
+            ),
+            DegradationOrigin(
+                node_name="summarize",
+                step_index=1,
+                signal_types=("tool_failure",),
+                confidence=0.6,
+                reason="maybe summarize",
+            ),
+            DegradationOrigin(
+                node_name="classify",
+                step_index=2,
+                signal_types=("tool_failure",),
+                confidence=0.5,
+                reason="maybe classify",
+            ),
+        ],
+        propagation_chains=[],
+        causal_summary="Low confidence — inspector walk stands.",
+        timeline=[],
+    )
+    result = build_fix_prompt_for_record(record)
+
+    assert result.node == "retrieve"
+    assert "`retrieve` → `summarize` → `classify`" in result.prompt
+
+
+def test_ranked_origins_use_recorded_propagation_chain(project: Path) -> None:
+    """When correlation overwrote the chain, a real propagation_chains
+    entry is the path to narrate — not the ranked origin list."""
+    record = _cascade_record()
+    record.root_cause_chain = ["retrieve", "summarize"]
+    record.first_failure_step = "retrieve"
+    record.correlation = CorrelationReport(
+        run_id=record.run_id,
+        degradation_origins=[
+            DegradationOrigin(
+                node_name="retrieve",
+                step_index=0,
+                signal_types=("tool_failure",),
+                confidence=0.95,
+                reason="rate limited",
+            ),
+            DegradationOrigin(
+                node_name="summarize",
+                step_index=1,
+                signal_types=("tool_failure",),
+                confidence=0.82,
+                reason="empty docs",
+            ),
+        ],
+        propagation_chains=[
+            PropagationChain(
+                chain_type="tool_failure_cascade",
+                nodes=("retrieve", "summarize", "classify"),
+                links=(),
+                summary="empty docs cascaded into the classifier",
+            )
+        ],
+        causal_summary="Rate limit at retrieve cascaded to classify.",
+        timeline=[],
+    )
+    result = build_fix_prompt_for_record(record)
+
+    assert result.node == "retrieve"
+    assert "**Do not edit `classify`.**" in result.prompt
+    assert "`retrieve` → `summarize` → `classify`" in result.prompt
+
+
 def test_causal_section_never_exonerates_the_true_root_cause(project: Path) -> None:
     """--node overriding to a downstream node must not certify an upstream
     node (possibly the real bug) as 'behaving correctly'."""
@@ -446,9 +604,7 @@ def test_windows_drive_letter_path_is_not_mistaken_for_a_missing_colon(
         overall_status="crashed",
         first_failure_step="retrieve",
         root_cause_chain=["retrieve"],
-        node_fn_paths={
-            "retrieve": str(project / "src" / "nodes" / "retrieval.py") + ":1"
-        },
+        node_fn_paths={"retrieve": str(project / "src" / "nodes" / "retrieval.py") + ":1"},
         steps=[
             _event(0, "retrieve", "crashed", output_dict=None, exception="RuntimeError: boom"),
         ],
@@ -634,8 +790,7 @@ def test_sanitized_does_not_leak_exception_message(project: Path) -> None:
                 "crashed",
                 output_dict=None,
                 exception=(
-                    "Traceback (most recent call last):\n"
-                    "KeyError: 'customer_ssn=123-45-6789'"
+                    "Traceback (most recent call last):\nKeyError: 'customer_ssn=123-45-6789'"
                 ),
             )
         ],
@@ -647,6 +802,9 @@ def test_sanitized_does_not_leak_exception_message(project: Path) -> None:
     assert "KeyError" in scrubbed
     # The section's own claim must now actually be true.
     assert "Values omitted" in scrubbed
+    # --sanitized omits the traceback; do not promise one is below.
+    assert "traceback is below" not in scrubbed.lower()
+    assert "exception type is below" in scrubbed.lower()
 
 
 def test_sanitized_does_not_leak_multiline_exception_message(project: Path) -> None:
@@ -906,10 +1064,7 @@ def test_node_override_on_healthy_node_raises(project: Path) -> None:
 
 def test_prompt_is_deterministic(project: Path) -> None:
     record = _cascade_record()
-    assert (
-        build_fix_prompt_for_record(record).prompt
-        == build_fix_prompt_for_record(record).prompt
-    )
+    assert build_fix_prompt_for_record(record).prompt == build_fix_prompt_for_record(record).prompt
 
 
 def test_no_internal_jargon_leaks(project: Path) -> None:
@@ -995,8 +1150,7 @@ def _rogue_blocks(prompt: str) -> list[str]:
     return [
         line
         for line in _outside_fences(prompt).splitlines()
-        if line.lstrip().startswith(("#", ">"))
-        and not line.startswith(_OUR_HEADINGS)
+        if line.lstrip().startswith(("#", ">")) and not line.startswith(_OUR_HEADINGS)
     ]
 
 
@@ -1119,9 +1273,7 @@ def test_cli_writes_prompt_to_file(project: Path) -> None:
 
 def test_cli_node_and_sanitized_flags(project: Path) -> None:
     save_run(_cascade_record())
-    result = CliRunner().invoke(
-        app, ["fix", "a1b2c3d4", "--node", "classify", "--sanitized"]
-    )
+    result = CliRunner().invoke(app, ["fix", "a1b2c3d4", "--node", "classify", "--sanitized"])
     assert result.exit_code == 0
     assert "Q3 revenue breakdown" not in result.stdout
 
