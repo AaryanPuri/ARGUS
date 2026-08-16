@@ -8,6 +8,7 @@ from rich.text import Text
 
 from argus.cli.cmd_diff import diff_runs
 from argus.cli.cmd_doctor import doctor
+from argus.cli.cmd_fix import fix_run
 from argus.cli.cmd_locate import locate_sources
 from argus.cli.cmd_login import login, logout, whoami
 from argus.cli.cmd_open_ui import open_ui
@@ -57,6 +58,7 @@ _COMMANDS = [
     ("inspect <id> --step <node>", "dump raw input / output state for a node"),
     ("diff <id>", "diff a replay run against its original"),
     ("diff <id-a> <id-b>", "diff any two runs side-by-side"),
+    ("fix <id>", "print a fix prompt for the root cause, ready to paste"),
     ("login", "sign in with Google to sync runs to the cloud"),
     ("logout", "clear stored credentials"),
     ("whoami", "show current login status"),
@@ -69,6 +71,7 @@ _WHEN_TO_USE = [
     ("show", "understand what happened: statuses, warnings, root cause"),
     ("replay", "re-run from a broken node after fixing the code (warns about live calls)"),
     ("inspect", "read exact input/output JSON for a specific step"),
+    ("fix", "hand the root cause to a coding agent as a ready-made prompt"),
     ("diff", "verify a fix actually changed behaviour between runs"),
 ]
 
@@ -294,6 +297,26 @@ def cmd_diff(
 ) -> None:
     """Compare two runs node-by-node: status, duration, and output field changes."""
     diff_runs(run_id_a, run_id_b)
+
+
+@app.command("fix")
+def cmd_fix(
+    run_id: Annotated[str, typer.Argument(help="Run ID or 8-char prefix.")],
+    node: Annotated[
+        Optional[str],
+        typer.Option("--node", help="Target a specific node instead of the root cause."),
+    ] = None,
+    output: Annotated[
+        Optional[str],
+        typer.Option("--output", "-o", help="Write the prompt to a file instead of stdout."),
+    ] = None,
+    sanitized: Annotated[
+        bool,
+        typer.Option("--sanitized", help="Strip recorded values, keep field names and shapes."),
+    ] = False,
+) -> None:
+    """Print a ready-to-paste fix prompt for the run's root-cause failure."""
+    fix_run(run_id, node=node, output=output, sanitized=sanitized)
 
 
 @app.command("login")

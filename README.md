@@ -111,6 +111,7 @@ watcher = ArgusWatcher(graph, validators={
 
 ```
 argus show last                      # most recent run
+argus fix <id>                       # fix prompt for the root cause, ready to paste
 argus replay <id> <node>             # re-run from a node
 argus diff <id-a> <id-b>             # compare two runs
 argus ui                             # web dashboard
