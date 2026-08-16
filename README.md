@@ -22,25 +22,28 @@ Your LangGraph pipeline runs fine — no exception. But three nodes later, somet
 pip install argus-agents
 ```
 
-CLI, LangGraph adapter, and UI. Fully local. Package name is **`argus-agents`**, not `argus`.
-
-**2. Write project skills**
+**2. Init**
 
 ```bash
 argus init
 ```
 
-Writes Cursor and Claude skills (`.cursor/skills/argus-debug/` and `.claude/skills/argus-debug/`). Commit them. The skill already contains the setup prompt: later chats can call `ArgusWatcher.attach()` and read `.argus/runs/<id>.json` instead of guessing from logs.
+Writes `.cursor/skills/argus-debug/` and `.claude/skills/argus-debug/`. Commit them. The skill already contains the setup prompt.
 
-**3. Attach ARGUS**
+**3. Attach**
 
-Ask your editor agent to wire ARGUS — after `argus init`, that is enough. The [AI Setup Prompt](https://arguslabs.in) is a fallback if you still want to paste a one-shot. Happy path: `ArgusWatcher.attach(graph)` — heuristics on, judge off, no login, no TypedDict rewrite.
+Ask your editor agent to wire ARGUS. [AI Setup Prompt](https://arguslabs.in) is a fallback.
+
+```python
+from argus import ArgusWatcher
+app = ArgusWatcher().attach(graph)
+```
 
 <img src="https://github.com/VaradDurge/ARGUS/blob/master/assets/Argus%20Guidelines%20and%20Contribution.png?raw=true" width="700"/>
 
-**4. Run your pipeline**
+**4. Run**
 
-Same as always. ARGUS watches in the background and saves the run. If something is wrong, a short finding prints in the terminal — you do not need the dashboard for the first aha:
+Same as always. Failures print in the terminal; clean runs stay silent.
 
 ```
 [argus] run 8f3a1c02  silent_failure on retrieve
@@ -48,24 +51,16 @@ Same as always. ARGUS watches in the background and saves the run. If something 
         argus show last   |  argus ui
 ```
 
-Clean runs stay silent.
-
 **5. Inspect**
 
 ```bash
-argus show last    # terminal, no browser
-argus ui           # dashboard at localhost:7842
+argus show last
+argus ui
 ```
 
-If `argus ui` shows an empty table, it is usually the wrong directory or you opened it before the first run. The empty state lists the `.argus/runs` path being served — run the graph from the project root, or `argus show last` to confirm runs exist. Check cwd vs git/pyproject root (or `$ARGUS_DIR`).
+Empty dashboard → wrong directory or no run yet. Check project root or `$ARGUS_DIR`.
 
-**Optional — smarter detection**
-
-```bash
-argus key set
-```
-
-Skip this and you still get heuristics.
+**Optional** — `argus key set` for the LLM judge. Skip it and you still get heuristics.
 
 ## Bring Your Own Key (BYOK)
 

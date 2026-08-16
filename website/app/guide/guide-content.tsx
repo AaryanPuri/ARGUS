@@ -94,13 +94,13 @@ export default function GuideContent() {
       <section className="mb-16">
         <h2 className="text-xl font-semibold text-foreground mb-3">Quick Start</h2>
         <p className="text-[15px] text-muted-foreground leading-[1.7] mb-6">
-          Get ARGUS monitoring on your pipeline in 5 steps. Heuristics work without login or an API key.
+          Five steps. Heuristics work without login or an API key.
         </p>
 
         <div className="space-y-5 mb-8">
-          <Step n={1} title="Install ARGUS" text="Run pip install argus-agents in your project. That ships the CLI, LangGraph adapter, and UI. The package name is argus-agents, not argus." />
-          <Step n={2} title="Write project skills" text="Run argus init. That writes Cursor and Claude skills at .cursor/skills/argus-debug/ and .claude/skills/argus-debug/. Commit them. The skill already contains the setup prompt — later chats can call ArgusWatcher.attach() and read .argus/runs JSON instead of guessing from logs." />
-          <Step n={3} title="Attach ARGUS" text="Ask your editor agent to wire ARGUS — after argus init that is enough. The AI Setup Prompt from the landing page (shown below) is a fallback. Happy path: ArgusWatcher.attach(graph) — heuristics on, judge off, no login, no TypedDict rewrite." />
+          <Step n={1} title="Install" text="pip install argus-agents" />
+          <Step n={2} title="Init" text="argus init — writes .cursor/skills/argus-debug/ and .claude/skills/argus-debug/. Commit them. The skill already contains the setup prompt." />
+          <Step n={3} title="Attach" text="Ask your editor agent to wire ARGUS. The AI Setup Prompt below is a fallback. ArgusWatcher.attach(graph)" />
         </div>
 
         <div className="rounded-lg overflow-hidden mb-8 max-w-[520px]" style={{ border: '1px solid var(--border)' }}>
@@ -108,8 +108,8 @@ export default function GuideContent() {
         </div>
 
         <div className="space-y-5 mb-8">
-          <Step n={4} title="Run your pipeline" text="Execute your LangGraph / LangChain pipeline as usual. ARGUS captures the run automatically. If something is wrong, a short [argus] finding prints in the terminal — clean runs stay silent. You do not need the dashboard for the first aha." />
-          <Step n={5} title="Inspect the run" text="Run argus show last in the terminal, or argus ui for the dashboard. The agent should read .argus/runs/<id>.json rather than guessing from terminal logs. If the dashboard table is empty, you opened it too early or from the wrong directory — the empty state shows which .argus/runs path is being served." />
+          <Step n={4} title="Run" text="Same as always. Failures print [argus] in the terminal; clean runs stay silent." />
+          <Step n={5} title="Inspect" text="argus show last or argus ui. Empty table → wrong directory or no run yet." />
         </div>
 
         <h3 className="text-sm font-semibold uppercase tracking-widest text-muted-foreground mb-4">After setup</h3>
