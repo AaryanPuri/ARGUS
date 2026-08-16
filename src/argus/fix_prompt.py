@@ -454,22 +454,51 @@ def _render_state(
         present = list(state.keys())[:6]
 
     if sanitized:
-        lines = [f"{k}: {_describe_shape(state[k])}" for k in present]
-        body = "\n".join(lines)
-        block = f"```\n{body}\n```"
+        lines = [f"{_inline(k, 80)}: {_describe_shape(state[k])}" for k in present]
+        block = _fence("\n".join(lines))
     else:
         subset = {k: state[k] for k in present}
         body, truncated = _dumps(subset)
         # A truncated dump is not valid JSON — fencing it as ```json invites
         # the agent to parse it and treat the parse failure as the bug it was
         # asked to diagnose.
-        fence = "text" if truncated else "json"
-        block = f"```{fence}\n{body}\n```"
+        block = _fence(body, "text" if truncated else "json")
 
     remaining = [k for k in state.keys() if k not in present]
     if remaining:
-        block += f"\n\nOther keys present: {', '.join(remaining)}"
+        keys = ", ".join(_inline(k, 80) for k in remaining)
+        block += f"\n\nOther keys present: {keys}"
     return block
+
+
+def _fence(content: str, lang: str = "") -> str:
+    """Wrap content in a code fence it cannot break out of.
+
+    Recorded values can contain triple backticks. CommonMark closes a fence
+    only on a run of at least as many backticks as opened it, so the fence is
+    sized one longer than the longest run inside the payload. Without this, a
+    traceback or tool response containing "```" ends the block early and its
+    remainder is read as top-level instructions by whatever agent the prompt
+    is pasted into.
+    """
+    longest = max((len(run) for run in re.findall(r"`+", content)), default=0)
+    ticks = "`" * max(3, longest + 1)
+    return f"{ticks}{lang}\n{content}\n{ticks}"
+
+
+def _inline(text: Any, limit: int = 200) -> str:
+    """Neutralize untrusted text for interpolation into prose.
+
+    Everything ARGUS records — state values, tool responses, LLM output,
+    exception messages — is attacker-influenceable in a real pipeline, and
+    this prompt is written to be pasted into a coding agent. Collapsing to a
+    single line removes the line starts that ``#``/``-``/``>`` need to form
+    markdown blocks; neutralizing backticks stops inline-code escapes.
+    """
+    flat = " ".join(str(text).split())
+    if len(flat) > limit:
+        flat = flat[:limit] + "…"
+    return flat.replace("`", "'")
 
 
 def _dumps(value: Any) -> tuple[str, bool]:
@@ -496,7 +525,7 @@ def _describe_shape(value: Any) -> str:
     if isinstance(value, (list, tuple)):
         return f"{type(value).__name__} ({len(value)} items)"
     if isinstance(value, dict):
-        keys = ", ".join(str(k) for k in list(value.keys())[:8])
+        keys = ", ".join(_inline(k, 40) for k in list(value.keys())[:8])
         return f"dict (keys: {keys})" if keys else "dict (empty)"
     return type(value).__name__
 
@@ -571,7 +600,7 @@ def _headline(
             return f"`{target}` returns a result even though {plain}"
         if insp.missing_fields:
             succ = _successors(record, target)
-            field = insp.missing_fields[0]
+            field = _inline(insp.missing_fields[0], 80)
             if len(succ) == 1:
                 return (
                     f"`{target}` does not produce the `{field}` field that "
@@ -579,38 +608,42 @@ def _headline(
                 )
             return f"`{target}` does not produce the `{field}` field"
         if insp.empty_fields:
-            return f"`{target}` produces an empty `{insp.empty_fields[0]}`"
+            return f"`{target}` produces an empty `{_inline(insp.empty_fields[0], 80)}`"
         if insp.type_mismatches:
             m = insp.type_mismatches[0]
             return (
-                f"`{target}` produces `{m.field_name}` as {m.actual_type} "
-                f"instead of {m.expected_type}"
+                f"`{target}` produces `{_inline(m.field_name, 80)}` as "
+                f"{_inline(m.actual_type, 60)} instead of "
+                f"{_inline(m.expected_type, 60)}"
             )
         if insp.semantic_signals:
             ss = insp.semantic_signals[0]
-            where = ss.dotted_path or "its output"
+            where = _inline(ss.dotted_path, 80) or "its output"
             return f"`{target}` produces unusable content in `{where}`"
         if insp.degraded_fields:
             upstream = insp.degraded_upstream_node or "an earlier node"
             return (
-                f"`{target}` runs without the `{insp.degraded_fields[0]}` "
-                f"field from `{upstream}`"
+                f"`{target}` runs without the "
+                f"`{_inline(insp.degraded_fields[0], 80)}` field from `{upstream}`"
             )
 
     if event.anomaly_signals:
-        return f"`{target}` behaves unexpectedly: {event.anomaly_signals[0].reason}"
+        return f"`{target}` behaves unexpectedly: {_inline(event.anomaly_signals[0].reason)}"
 
     plain = _STATUS_PLAIN.get(event.status, "produced an unexpected result")
     return f"`{target}` {plain}"
 
 
 def _exception_label(exc: str) -> str:
-    """Last traceback line, trimmed to the exception type and message."""
+    """Last traceback line, trimmed to the exception type and message.
+
+    Neutralized: this lands in the H1 title and in prose, and the message
+    half is frequently attacker-influenceable recorded data.
+    """
     lines = [ln.strip() for ln in exc.strip().splitlines() if ln.strip()]
     if not lines:
         return "an error"
-    last = lines[-1]
-    return last if len(last) <= 120 else last[:120] + "..."
+    return _inline(lines[-1], 120)
 
 
 # An exception line is "SomeError: message" or "pkg.mod.SomeError: message".
@@ -663,7 +696,7 @@ def _what_went_wrong(
         )
     elif event.status == "degraded_input" and insp is not None:
         upstream = insp.degraded_upstream_node or "an earlier node"
-        fields = ", ".join(f"`{f}`" for f in insp.degraded_fields) or "a field"
+        fields = ", ".join(f"`{_inline(f, 80)}`" for f in insp.degraded_fields) or "a field"
         paras.append(
             f"`{target}` ran without {fields}, because `{upstream}` never "
             "produced it. It did not raise an error — it carried on with "
@@ -679,10 +712,12 @@ def _what_went_wrong(
 
     for tf in insp.tool_failures:
         plain = _TOOL_FAILURE_PLAIN.get(tf.failure_type, "the external call failed")
-        detail = "" if sanitized else (f" ({tf.evidence})" if tf.evidence else "")
+        detail = (
+            "" if sanitized else (f" ({_inline(tf.evidence)})" if tf.evidence else "")
+        )
         paras.append(
-            f"While producing `{tf.field_name}`, {plain}{detail}. The result was "
-            "kept and passed on as if the call had succeeded."
+            f"While producing `{_inline(tf.field_name, 80)}`, {plain}{detail}. The "
+            "result was kept and passed on as if the call had succeeded."
         )
 
     if insp.missing_fields:
@@ -694,52 +729,54 @@ def _what_went_wrong(
         for field in insp.missing_fields:
             if len(succ) == 1:
                 paras.append(
-                    f"The next node (`{succ[0]}`) reads `state['{field}']`, but "
-                    f"this node's output has no `{field}` key."
+                    f"The next node (`{succ[0]}`) reads "
+                    f"`state['{_inline(field, 80)}']`, but this node's output "
+                    f"has no `{_inline(field, 80)}` key."
                 )
             else:
                 paras.append(
-                    f"A later node reads `state['{field}']`, but this node's "
-                    f"output has no `{field}` key."
+                    f"A later node reads `state['{_inline(field, 80)}']`, but "
+                    f"this node's output has no `{_inline(field, 80)}` key."
                 )
 
     for field in insp.empty_fields:
-        paras.append(f"`{field}` is present in the output but empty.")
+        paras.append(f"`{_inline(field, 80)}` is present in the output but empty.")
 
     for field in insp.suspicious_empty_keys:
         paras.append(
-            f"`{field}` was written as an empty value, which will degrade "
+            f"`{_inline(field, 80)}` was written as an empty value, which will degrade "
             "whatever reads it downstream."
         )
 
     for m in insp.type_mismatches:
+        head = (
+            f"`{_inline(m.field_name, 80)}` should be {_inline(m.expected_type, 60)}, "
+            f"but it is {_inline(m.actual_type, 60)}"
+        )
         if sanitized:
-            paras.append(
-                f"`{m.field_name}` should be {m.expected_type}, but it is "
-                f"{m.actual_type}."
-            )
+            paras.append(f"{head}.")
         else:
-            paras.append(
-                f"`{m.field_name}` should be {m.expected_type}, but it is "
-                f"{m.actual_type} ({m.actual_value_repr})."
-            )
+            paras.append(f"{head} ({_inline(m.actual_value_repr)}).")
 
     for ss in insp.semantic_signals:
-        where = ss.dotted_path or "the output"
+        where = _inline(ss.dotted_path, 80) or "the output"
         evidence = (
-            "" if sanitized else (f' Example: "{ss.evidence}".' if ss.evidence else "")
+            ""
+            if sanitized
+            else (f' Example: "{_inline(ss.evidence)}".' if ss.evidence else "")
         )
-        paras.append(f"In `{where}`: {ss.description}.{evidence}")
+        paras.append(f"In `{where}`: {_inline(ss.description)}.{evidence}")
 
     for a in event.anomaly_signals:
         # expected_behavior is a declared threshold/profile and reason is a
         # fixed label, but observed_behavior can carry content lifted from
         # the output (anomaly_detector assigns worst_reason to it).
+        expected = _inline(a.expected_behavior)
         if sanitized:
-            paras.append(f"Expected {a.expected_behavior}, but the output did not match.")
+            paras.append(f"Expected {expected}, but the output did not match.")
         else:
             paras.append(
-                f"Expected {a.expected_behavior}, but observed {a.observed_behavior}."
+                f"Expected {expected}, but observed {_inline(a.observed_behavior)}."
             )
 
     return paras
@@ -773,19 +810,27 @@ def _done_when(
             )
             conds.append(
                 f"When {plain}, `{target}` either raises or retries — it never "
-                f"returns `{tf.field_name}` as a successful empty result."
+                f"returns `{_inline(tf.field_name, 80)}` as a successful empty result."
             )
         for field in insp.missing_fields:
-            conds.append(f"`{target}`'s output dict contains a `{field}` key.")
+            conds.append(
+                f"`{target}`'s output dict contains a `{_inline(field, 80)}` key."
+            )
         for field in insp.empty_fields:
-            conds.append(f"`{target}`'s `{field}` value is non-empty.")
+            conds.append(
+                f"`{target}`'s `{_inline(field, 80)}` value is non-empty."
+            )
         for m in insp.type_mismatches:
-            conds.append(f"`{m.field_name}` is {m.expected_type}.")
+            conds.append(
+                f"`{_inline(m.field_name, 80)}` is {_inline(m.expected_type, 60)}."
+            )
         for ss in insp.semantic_signals:
-            where = ss.dotted_path or "the output"
+            where = _inline(ss.dotted_path, 80) or "the output"
             # ss.description is registry prose; the raw category slug is an
             # internal enum and reads as broken grammar in a success criterion.
-            conds.append(f"`{where}` no longer shows this problem: {ss.description}.")
+            conds.append(
+                f"`{where}` no longer shows this problem: {_inline(ss.description)}."
+            )
         # NOTE: degraded_fields deliberately produces no condition here. The
         # fix for a degraded node is in the upstream node that failed to
         # produce the field — but Constraints forbids editing other nodes, so
@@ -941,7 +986,7 @@ def _evidence_section(
                 "(message omitted — may contain a recorded value)."
             )
         else:
-            out.append(f"```\n{event.exception.strip()}\n```")
+            out.append(_fence(event.exception.strip()))
 
     if symptom_event is not None and symptom_event.exception:
         position = _relative_position(record, target, symptom_event.node_name)
@@ -952,7 +997,7 @@ def _evidence_section(
                 "(message omitted — may contain a recorded value)."
             )
         else:
-            out.append(f"```\n{symptom_event.exception.strip()}\n```")
+            out.append(_fence(symptom_event.exception.strip()))
 
     if sanitized:
         out.append(
@@ -1036,7 +1081,7 @@ def _causal_section(
     )
 
     if not sanitized and record.correlation and record.correlation.causal_summary:
-        out.append(f"Recorded analysis: {record.correlation.causal_summary}")
+        out.append(f"Recorded analysis: {_inline(record.correlation.causal_summary, 400)}")
 
     return out
 
