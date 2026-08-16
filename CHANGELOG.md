@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.9.2 — 2026-08-16
+
+- `argus init` writes Cursor/Claude skills that attach `ArgusWatcher` and debug from `.argus/runs`
+- Failed runs print a short `[argus]` finding; clean runs stay silent
+- Empty dashboard shows which `.argus` path is served
+
 ## 0.9.1 — 2026-08-14
 
 - `pip install argus-agents` ships CLI, LangGraph adapter, and UI

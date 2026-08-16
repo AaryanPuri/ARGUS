@@ -99,8 +99,8 @@ export default function GuideContent() {
 
         <div className="space-y-5 mb-8">
           <Step n={1} title="Install ARGUS" text="Run pip install argus-agents in your project. That ships the CLI, LangGraph adapter, and UI. The package name is argus-agents, not argus." />
-          <Step n={2} title="Write project skills" text="Run argus init. That writes Cursor and Claude skills at .cursor/skills/argus-debug/ and .claude/skills/argus-debug/. Commit them. The skill teaches first-time ArgusWatcher.attach() wiring and the debug loop, so later chats can wire ARGUS and read .argus/runs JSON instead of guessing from logs." />
-          <Step n={3} title="Attach ARGUS" text="Ask your editor agent to wire ARGUS — after argus init the skill already contains the setup prompt, so you do not need to paste anything. The AI Setup Prompt from the landing page (shown below) is a fallback. Happy path: ArgusWatcher.attach(graph) — heuristics on, judge off, no login, no TypedDict rewrite." />
+          <Step n={2} title="Write project skills" text="Run argus init. That writes Cursor and Claude skills at .cursor/skills/argus-debug/ and .claude/skills/argus-debug/. Commit them. The skill already contains the setup prompt — later chats can call ArgusWatcher.attach() and read .argus/runs JSON instead of guessing from logs." />
+          <Step n={3} title="Attach ARGUS" text="Ask your editor agent to wire ARGUS — after argus init that is enough. The AI Setup Prompt from the landing page (shown below) is a fallback. Happy path: ArgusWatcher.attach(graph) — heuristics on, judge off, no login, no TypedDict rewrite." />
         </div>
 
         <div className="rounded-lg overflow-hidden mb-8 max-w-[520px]" style={{ border: '1px solid var(--border)' }}>
@@ -133,9 +133,11 @@ export default function GuideContent() {
         <CodeBlock title="Write Cursor and Claude project skills">{`argus init`}</CodeBlock>
         <p className="text-[15px] text-muted-foreground leading-[1.7] mb-6">
           Writes <Code>.cursor/skills/argus-debug/SKILL.md</Code> and{" "}
-          <Code>.claude/skills/argus-debug/SKILL.md</Code>. Safe to re-run (skips
-          unchanged files; pass <Code>--force</Code> to overwrite). Commit them so
-          later chats read <Code>.argus/runs</Code> JSON instead of guessing from logs.
+          <Code>.claude/skills/argus-debug/SKILL.md</Code>. The skill already
+          contains the setup prompt. Safe to re-run (skips unchanged files; pass{" "}
+          <Code>--force</Code> to overwrite). Commit them so later chats can
+          attach ARGUS and read <Code>.argus/runs</Code> JSON instead of guessing
+          from logs.
         </p>
 
         <h3 className="text-sm font-semibold uppercase tracking-widest text-muted-foreground mb-4 mt-8">Viewing runs</h3>
