@@ -1112,7 +1112,7 @@ def test_cli_writes_prompt_to_stdout(project: Path) -> None:
 def test_cli_writes_prompt_to_file(project: Path) -> None:
     save_run(_cascade_record())
     out = project / "fix.md"
-    result = CliRunner().invoke(app, ["fix", "a1b2c3d4", "-o", str(out)])
+    result = CliRunner().invoke(app, ["fix", "a1b2c3d4", "--output", str(out)])
     assert result.exit_code == 0
     assert out.read_text(encoding="utf-8").startswith("# Fix: ")
 
