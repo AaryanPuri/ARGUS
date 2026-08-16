@@ -105,7 +105,7 @@ export default function GuideContent() {
 
         <div className="space-y-5 mb-8">
           <Step n={4} title="Run" text="Same as always. Failures print [argus] in the terminal; clean runs stay silent." />
-          <Step n={5} title="Inspect" text="argus show last or argus ui. Empty table → wrong directory or no run yet." />
+          <Step n={5} title="Inspect" text="argus show last, argus fix <id>, or argus ui. Empty table → wrong directory or no run yet." />
         </div>
 
         <h3 className="text-sm font-semibold uppercase tracking-widest text-muted-foreground mb-4">After setup</h3>
@@ -139,6 +139,7 @@ export default function GuideContent() {
         <h3 className="text-sm font-semibold uppercase tracking-widest text-muted-foreground mb-4 mt-8">Viewing runs</h3>
         <CodeBlock title="List all runs">{`argus list`}</CodeBlock>
         <CodeBlock title="Show the most recent run">{`argus show last`}</CodeBlock>
+        <CodeBlock title="Print a paste-ready fix prompt for the root-cause node">{`argus fix <run-id>`}</CodeBlock>
         <CodeBlock title="Show a specific run (full ID or 8-char prefix)">{`argus show <run-id>`}</CodeBlock>
         <CodeBlock title="Inspect raw input/output for a specific node">{`argus inspect <run-id> --step <node-name>`}</CodeBlock>
 

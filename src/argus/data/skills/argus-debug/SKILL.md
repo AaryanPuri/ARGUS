@@ -99,14 +99,15 @@ If skills are missing, run `argus init` and commit the files it writes.
 
 1. `argus list` — newest runs first; copy the id.
 2. `argus show last` or `argus show <id>` — statuses, warnings, root cause.
-3. `argus show <id> --json` or open `.argus/runs/<id>.json` — do not reconstruct
+3. `argus fix <id>` — paste-ready prompt aimed at the root-cause node (not the crash site).
+4. `argus show <id> --json` or open `.argus/runs/<id>.json` — do not reconstruct
    the story from stdout/stderr.
-4. In the JSON, start with:
+5. In the JSON, start with:
    - `overall_status` (`clean` | `silent_failure` | `crashed` | `semantic_fail` | `interrupted`)
    - `first_failure_step`, `root_cause_chain`
    - `steps[]`: `node_name`, `status`, `output_dict`, `exception`, `inspection`
      (`missing_fields`, `empty_fields`, `tool_failures`, `semantic_signals`)
-5. Empty documents / dropped keys are usually a **silent failure** on an
+6. Empty documents / dropped keys are usually a **silent failure** on an
    upstream node, not the node that crashed later.
 
 ## Replay after a fix
