@@ -32,7 +32,7 @@ Writes `.cursor/skills/argus-debug/` and `.claude/skills/argus-debug/`. Commit t
 
 **3. Attach**
 
-Ask your editor agent to wire ARGUS. [AI Setup Prompt](https://arguslabs.in) is a fallback.
+Ask your editor agent to wire ARGUS. (The skill already contains this AI setup prompt; the landing-page copy is just a fallback.)
 
 ```python
 from argus import ArgusWatcher

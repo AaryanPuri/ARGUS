@@ -100,11 +100,7 @@ export default function GuideContent() {
         <div className="space-y-5 mb-8">
           <Step n={1} title="Install" text="pip install argus-agents" />
           <Step n={2} title="Init" text="argus init — writes .cursor/skills/argus-debug/ and .claude/skills/argus-debug/. Commit them. The skill already contains the setup prompt." />
-          <Step n={3} title="Attach" text="Ask your editor agent to wire ARGUS. The AI Setup Prompt below is a fallback. ArgusWatcher.attach(graph)" />
-        </div>
-
-        <div className="rounded-lg overflow-hidden mb-8 max-w-[520px]" style={{ border: '1px solid var(--border)' }}>
-          <Image src="/guide/ai-setup-prompt.png" alt="Click the AI Setup Prompt button on the landing page" width={520} height={160} className="w-full h-auto block" />
+          <Step n={3} title="Attach" text="Ask your editor agent to wire ARGUS. (The skill already contains this AI setup prompt; the landing-page copy is just a fallback.) ArgusWatcher.attach(graph)" />
         </div>
 
         <div className="space-y-5 mb-8">
@@ -178,12 +174,9 @@ export default function GuideContent() {
           AI Integration Prompt
         </h2>
         <p className="text-[15px] text-muted-foreground mb-5 leading-relaxed max-w-[620px]">
-          This is the full prompt copied by the AI Setup Prompt button. After{" "}
-          <Code>argus init</Code>, asking the editor agent to wire ARGUS is enough
-          because the skill already contains the setup prompt. Paste this once only
-          if you still want a one-shot wiring prompt (landing-page paste is a
-          fallback, not required). It attaches ARGUS without rewriting your state
-          types or node signatures.
+          After <Code>argus init</Code>, the skill already contains this AI setup
+          prompt — asking your editor agent to wire ARGUS is enough. The copy
+          below is just a fallback if you still want to paste a one-shot.
         </p>
         <div
           className="rounded-lg overflow-hidden"
