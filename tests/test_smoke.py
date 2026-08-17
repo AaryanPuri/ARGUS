@@ -72,7 +72,8 @@ def test_extract_usage_from_output():
     usage = extract_usage(None, output)
     assert usage is not None
     assert usage.total_tokens == 280
-    assert usage.total_cost_usd is not None
+    # pricing moved to cloud/ — OSS core may return None for cost
+    assert usage.total_cost_usd is None or isinstance(usage.total_cost_usd, float)
 
 
 def test_session_creates_run():
