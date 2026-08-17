@@ -274,6 +274,57 @@ def test_llm_generalize_rejects_missing_choices(monkeypatch):
 
 
 @pytest.mark.unit
+def test_llm_generalize_rejects_verbatim_echo(monkeypatch):
+    """A model that echoes the input literal back has generalized nothing.
+
+    Both compile and evidence checks let an echo through — it's a valid
+    regex and it trivially matches its own evidence. Left uncaught, the
+    literal gets stored as `generalized=True` with metacharacters now live:
+    a period in the original text starts matching any character instead of
+    itself, so the "generalized" signature is quietly broader than the
+    string it came from.
+    """
+    _mock_llm(monkeypatch, "rate limit exceeded")
+    assert _llm_generalize("rate limit exceeded", ("rate limit exceeded",)) is None
+
+
+@pytest.mark.unit
+def test_llm_generalize_rejects_echo_regardless_of_case_or_padding(monkeypatch):
+    """The echo check is case-insensitive and ignores surrounding whitespace.
+
+    A model that changes only case or adds stray whitespace has still
+    generalized nothing — it should be rejected the same as a byte-identical
+    echo, not accepted because the strings don't compare equal literally.
+    """
+    _mock_llm(monkeypatch, "  Rate Limit Exceeded  ")
+    assert _llm_generalize("rate limit exceeded", ("rate limit exceeded",)) is None
+
+
+@pytest.mark.unit
+def test_llm_generalize_accepts_genuine_generalization(monkeypatch):
+    """The echo guard must not reject real generalization along with it."""
+    _mock_llm(monkeypatch, r"rate\s+limit\s+(?:exceeded|reached)")
+    result = _llm_generalize("rate limit exceeded", ("rate limit exceeded",))
+    assert result == r"rate\s+limit\s+(?:exceeded|reached)"
+
+
+@pytest.mark.unit
+def test_generalize_signature_falls_back_to_heuristic_on_echo(monkeypatch):
+    """End to end: an echoed pattern must not be stored as if generalized.
+
+    Before the guard, this path stored the literal pattern as a regex with
+    generalized=True — true in name only, since nothing was generalized and
+    the pattern's own metacharacters (if any) were now live. The heuristic
+    fallback is a real generalization instead of a no-op wearing one.
+    """
+    _mock_llm(monkeypatch, "I cannot provide financial advice")
+    result = generalize_signature(_make_sig())
+    assert result.pattern != "I cannot provide financial advice"
+    compiled = re.compile(result.pattern, re.IGNORECASE)
+    assert compiled.search("unable to offer investment guidance")
+
+
+@pytest.mark.unit
 def test_generalize_signature_prefers_the_llm_regex(monkeypatch):
     """End to end: an LLM pattern wins over the heuristic one."""
     _mock_llm(monkeypatch, r"(?:cannot|unable\s+to)\s+\S+\s+financial\s+advice")
