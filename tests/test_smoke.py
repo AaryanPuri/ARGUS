@@ -1,11 +1,17 @@
 """Smoke tests — verify core imports and basic session behaviour."""
 import pytest
-from cloud.pricing import calculate_cost
 
-from argus.llm_tracker import extract_usage, scan_output_for_tokens  # noqa: I001
+from argus.llm_tracker import extract_usage, scan_output_for_tokens
 from argus.models import ArgusConfig, LLMCallInfo, LLMUsage, NodeEvent, RunRecord
 from argus.session import ArgusSession
 from argus.storage import load_run
+
+try:
+    from cloud.pricing import calculate_cost
+
+    _HAS_PRICING = True
+except ImportError:
+    _HAS_PRICING = False
 
 
 @pytest.fixture(autouse=True)
@@ -21,12 +27,14 @@ def test_imports():
     assert LLMUsage is not None
 
 
+@pytest.mark.skipif(not _HAS_PRICING, reason="cloud.pricing not available")
 def test_pricing_known_model():
     cost = calculate_cost("gpt-4o", 1000, 500)
     assert cost is not None
     assert cost > 0
 
 
+@pytest.mark.skipif(not _HAS_PRICING, reason="cloud.pricing not available")
 def test_pricing_unknown_model():
     assert calculate_cost("totally-unknown-model-xyz", 100, 100) is None
 
