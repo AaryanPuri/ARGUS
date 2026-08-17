@@ -12,20 +12,20 @@ These simulate actual AI agent architectures:
   - Nested subgraph-like patterns
   - Mixed success/failure across branches
 """
+
 from __future__ import annotations
 
 import json
 import operator
 from typing import Annotated, Any, TypedDict
 
-import pytest
 from langgraph.graph import END, StateGraph
 
 from argus import ArgusWatcher
 from argus.storage import load_run
 
-
 # ── State schemas ────────────────────────────────────────────────────────────
+
 
 class RAGState(TypedDict, total=False):
     query: str
@@ -63,6 +63,7 @@ class BatchState(TypedDict, total=False):
 
 # ── Helpers ──────────────────────────────────────────────────────────────────
 
+
 def _run(graph: StateGraph, state: dict, **kw) -> tuple[Any, str]:
     watcher = ArgusWatcher(**kw)
     app = watcher.attach(graph)
@@ -76,6 +77,7 @@ def _run(graph: StateGraph, state: dict, **kw) -> tuple[Any, str]:
 
 # ── 1. Full RAG pipeline — clean path ────────────────────────────────────────
 
+
 class TestRAGPipelineClean:
     """6-node RAG: retrieve → rerank → generate → fact_check → format → cite.
     All nodes produce good output. ARGUS should report clean."""
@@ -84,22 +86,40 @@ class TestRAGPipelineClean:
         def retrieve(state, **kw):
             return {
                 "documents": [
-                    {"id": "d1", "text": "Transformers use self-attention mechanisms.", "score": 0.92},
-                    {"id": "d2", "text": "BERT is a bidirectional transformer model.", "score": 0.87},
-                    {"id": "d3", "text": "GPT uses autoregressive language modeling.", "score": 0.85},
+                    {
+                        "id": "d1",
+                        "text": "Transformers use self-attention mechanisms.",
+                        "score": 0.92,
+                    },
+                    {
+                        "id": "d2",
+                        "text": "BERT is a bidirectional transformer model.",
+                        "score": 0.87,
+                    },
+                    {
+                        "id": "d3",
+                        "text": "GPT uses autoregressive language modeling.",
+                        "score": 0.85,
+                    },
                 ],
                 "messages": ["retrieve: found 3 docs"],
             }
 
         def rerank(state, **kw):
-            docs = sorted(state.get("documents", []), key=lambda d: d.get("score", 0), reverse=True)
+            docs = sorted(
+                state.get("documents", []), key=lambda d: d.get("score", 0), reverse=True
+            )
             return {"ranked_documents": docs, "messages": ["rerank: sorted by relevance"]}
 
         def generate(state, **kw):
             docs = state.get("ranked_documents", [])
             ctx = " ".join(d["text"] for d in docs[:2])
             return {
-                "answer": f"Based on the retrieved context: {ctx}. Transformers are a class of deep learning models that use self-attention to process sequences in parallel.",
+                "answer": (
+                    f"Based on the retrieved context: {ctx}. "
+                    "Transformers are a class of deep learning models "
+                    "that use self-attention to process sequences in parallel."
+                ),
                 "messages": ["generate: produced answer"],
             }
 
@@ -115,8 +135,12 @@ class TestRAGPipelineClean:
             }
 
         graph = StateGraph(RAGState)
-        for name, fn in [("retrieve", retrieve), ("rerank", rerank),
-                         ("generate", generate), ("fact_check", fact_check)]:
+        for name, fn in [
+            ("retrieve", retrieve),
+            ("rerank", rerank),
+            ("generate", generate),
+            ("fact_check", fact_check),
+        ]:
             graph.add_node(name, fn)
         graph.set_entry_point("retrieve")
         graph.add_edge("retrieve", "rerank")
@@ -133,6 +157,7 @@ class TestRAGPipelineClean:
 
 
 # ── 2. RAG pipeline — retriever returns empty docs ──────────────────────────
+
 
 class TestRAGEmptyRetrieval:
     """Retriever returns empty documents list. This is a critical failure:
@@ -172,13 +197,13 @@ class TestRAGEmptyRetrieval:
 
         generate_step = next(s for s in record.steps if s.node_name == "generate")
         has_refusal_signal = (
-            len(generate_step.inspection.semantic_signals) > 0
-            or generate_step.status != "pass"
+            len(generate_step.inspection.semantic_signals) > 0 or generate_step.status != "pass"
         )
         assert has_refusal_signal, "Generate node's hedging text should trigger semantic signal"
 
 
 # ── 3. Multi-tool agent with router ─────────────────────────────────────────
+
 
 class TestMultiToolAgent:
     """Planner → router → (search | calculator | code_exec) → synthesize.
@@ -194,7 +219,12 @@ class TestMultiToolAgent:
 
         def search(state, **kw):
             return {
-                "tool_results": [{"tool": "search", "data": {"title": "Latest AI news", "snippet": "GPT-5 announced..."}}],
+                "tool_results": [
+                    {
+                        "tool": "search",
+                        "data": {"title": "Latest AI news", "snippet": "GPT-5 announced..."},
+                    }
+                ],
                 "messages": ["search: found results"],
             }
 
@@ -206,14 +236,19 @@ class TestMultiToolAgent:
 
         def code_exec(state, **kw):
             return {
-                "tool_results": [{"tool": "code", "data": {"output": "Hello World", "exit_code": 0}}],
+                "tool_results": [
+                    {"tool": "code", "data": {"output": "Hello World", "exit_code": 0}}
+                ],
                 "messages": ["code_exec: ran successfully"],
             }
 
         def synthesize(state, **kw):
             results = state.get("tool_results", [])
             return {
-                "synthesis": f"Based on {len(results)} tool results: GPT-5 was announced with significant improvements.",
+                "synthesis": (
+                    f"Based on {len(results)} tool results: "
+                    "GPT-5 was announced with significant improvements."
+                ),
                 "messages": ["synthesize: combined results"],
             }
 
@@ -222,16 +257,24 @@ class TestMultiToolAgent:
             return r
 
         graph = StateGraph(AgentState)
-        for name, fn in [("planner", planner), ("search", search),
-                         ("calculator", calculator), ("code_exec", code_exec),
-                         ("synthesize", synthesize)]:
+        for name, fn in [
+            ("planner", planner),
+            ("search", search),
+            ("calculator", calculator),
+            ("code_exec", code_exec),
+            ("synthesize", synthesize),
+        ]:
             graph.add_node(name, fn)
         graph.set_entry_point("planner")
-        graph.add_conditional_edges("planner", route_fn, {
-            "search": "search",
-            "calculator": "calculator",
-            "code": "code_exec",
-        })
+        graph.add_conditional_edges(
+            "planner",
+            route_fn,
+            {
+                "search": "search",
+                "calculator": "calculator",
+                "code": "code_exec",
+            },
+        )
         graph.add_edge("search", "synthesize")
         graph.add_edge("calculator", "synthesize")
         graph.add_edge("code_exec", "synthesize")
@@ -250,6 +293,7 @@ class TestMultiToolAgent:
 
 # ── 4. Tool returns error + rate limit in same pipeline ─────────────────────
 
+
 class TestToolErrorsAndRateLimits:
     """First tool hits rate limit, second tool returns an error response.
     ARGUS should detect both failure types independently."""
@@ -257,28 +301,35 @@ class TestToolErrorsAndRateLimits:
     def test_rate_limit_and_error_both_detected(self):
         def rate_limited_api(state, **kw):
             return {
-                "tool_results": [{
-                    "tool": "api_v1",
-                    "status_code": 429,
-                    "error": "Rate limit exceeded. Please retry after 30 seconds.",
-                    "data": None,
-                }],
+                "tool_results": [
+                    {
+                        "tool": "api_v1",
+                        "status_code": 429,
+                        "error": "Rate limit exceeded. Please retry after 30 seconds.",
+                        "data": None,
+                    }
+                ],
                 "messages": ["api_v1: rate limited"],
             }
 
         def failing_api(state, **kw):
             return {
-                "tool_results": [{
-                    "tool": "api_v2",
-                    "status_code": 503,
-                    "error": "Service unavailable",
-                    "data": None,
-                }],
+                "tool_results": [
+                    {
+                        "tool": "api_v2",
+                        "status_code": 503,
+                        "error": "Service unavailable",
+                        "data": None,
+                    }
+                ],
                 "messages": ["api_v2: 503"],
             }
 
         def synthesize(state, **kw):
-            return {"synthesis": "Unable to complete request due to API issues.", "messages": ["synth: failed"]}
+            return {
+                "synthesis": "Unable to complete request due to API issues.",
+                "messages": ["synth: failed"],
+            }
 
         graph = StateGraph(AgentState)
         graph.add_node("rate_limited_api", rate_limited_api)
@@ -307,6 +358,7 @@ class TestToolErrorsAndRateLimits:
 
 # ── 5. Partial failure in batch results ─────────────────────────────────────
 
+
 class TestPartialBatchFailure:
     """Batch processor returns 5 items, 2 have error keys.
     ARGUS should detect partial_failure."""
@@ -327,7 +379,10 @@ class TestPartialBatchFailure:
         def summarize(state, **kw):
             items = state.get("processed", [])
             ok = sum(1 for i in items if "error" not in i)
-            return {"summary": f"{ok}/{len(items)} items processed", "messages": ["summarize: done"]}
+            return {
+                "summary": f"{ok}/{len(items)} items processed",
+                "messages": ["summarize: done"],
+            }
 
         graph = StateGraph(BatchState)
         graph.add_node("fetch_batch", fetch_batch)
@@ -348,6 +403,7 @@ class TestPartialBatchFailure:
 
 
 # ── 6. Confidence mismatch — high confidence + garbage data ─────────────────
+
 
 class TestConfidenceMismatch:
     """Node returns confidence: 0.98 but the actual data is empty/placeholder.
@@ -383,17 +439,20 @@ class TestConfidenceMismatch:
 
 # ── 7. Success flag is False — boolean failure detection ────────────────────
 
+
 class TestBooleanFailureIndicators:
     """Node returns success=False. ARGUS inspector rule 2b should catch it."""
 
     def test_success_false_detected(self):
         def api_with_success_flag(state, **kw):
             return {
-                "tool_results": [{
-                    "success": False,
-                    "data": None,
-                    "message": "Authentication failed",
-                }],
+                "tool_results": [
+                    {
+                        "success": False,
+                        "data": None,
+                        "message": "Authentication failed",
+                    }
+                ],
                 "messages": ["api: auth failed"],
             }
 
@@ -415,6 +474,7 @@ class TestBooleanFailureIndicators:
 
 # ── 8. Degraded input propagation ───────────────────────────────────────────
 
+
 class TestDegradedInputPropagation:
     """First node fails (error key). Second node operates on degraded input.
     ARGUS should mark node 2 as degraded_input, not as an independent failure."""
@@ -430,7 +490,10 @@ class TestDegradedInputPropagation:
         def summarizer(state, **kw):
             docs = state.get("documents", [])
             if not docs:
-                return {"answer": "No documents available to summarize.", "messages": ["summarizer: no input"]}
+                return {
+                    "answer": "No documents available to summarize.",
+                    "messages": ["summarizer: no input"],
+                }
             return {"answer": "Summary of documents.", "messages": ["summarizer: done"]}
 
         graph = StateGraph(RAGState)
@@ -446,7 +509,7 @@ class TestDegradedInputPropagation:
         fetcher_step = next(s for s in record.steps if s.node_name == "broken_fetcher")
         assert fetcher_step.status == "fail"
 
-        summarizer_step = next(s for s in record.steps if s.node_name == "summarizer")
+        next(s for s in record.steps if s.node_name == "summarizer")
         # Interesting ARGUS behavior: the summarizer is a terminal node (→ END)
         # so there are no successors to validate against. Its output text
         # ("No documents available") doesn't match semantic registry refusal
@@ -459,6 +522,7 @@ class TestDegradedInputPropagation:
 
 
 # ── 9. Retry loop — self-correcting agent ───────────────────────────────────
+
 
 class TestRetryLoopSelfCorrection:
     """Agent drafts → reviewer rejects → agent redrafts → reviewer approves.
@@ -478,7 +542,10 @@ class TestRetryLoopSelfCorrection:
                     "messages": [f"draft: attempt {iteration}"],
                 }
             return {
-                "draft": "This is a polished, well-structured response with proper citations and thorough analysis of the topic.",
+                "draft": (
+                    "This is a polished, well-structured response "
+                    "with proper citations and thorough analysis."
+                ),
                 "iteration": iteration,
                 "messages": [f"draft: attempt {iteration}"],
                 "is_approved": True,
@@ -508,10 +575,14 @@ class TestRetryLoopSelfCorrection:
         graph.add_node("review", review)
         graph.set_entry_point("draft")
         graph.add_edge("draft", "review")
-        graph.add_conditional_edges("review", should_retry, {
-            "retry": "draft",
-            "done": END,
-        })
+        graph.add_conditional_edges(
+            "review",
+            should_retry,
+            {
+                "retry": "draft",
+                "done": END,
+            },
+        )
 
         result, run_id = _run(graph, {"query": "Write about AI safety"})
         record = load_run(run_id)
@@ -524,6 +595,7 @@ class TestRetryLoopSelfCorrection:
 
 
 # ── 10. 6-node cascade — subtle degradation ────────────────────────────────
+
 
 class TestDeepCascade:
     """6-node pipeline: ingest → clean → enrich → validate → score → output.
@@ -574,7 +646,7 @@ class TestDeepCascade:
             }
 
         def validate(state, **kw):
-            enriched = state.get("enriched", {})
+            state.get("enriched", {})
             return {
                 "validation": {
                     "is_valid": True,
@@ -599,13 +671,22 @@ class TestDeepCascade:
             scores = state.get("scores", {})
             enriched = state.get("enriched", {})
             return {
-                "final_output": f"Analysis: {enriched.get('text', 'N/A')}. Quality: {scores.get('quality', 0):.0%}",
+                "final_output": (
+                    f"Analysis: {enriched.get('text', 'N/A')}. "
+                    f"Quality: {scores.get('quality', 0):.0%}"
+                ),
                 "messages": ["output: formatted"],
             }
 
         graph = StateGraph(DeepState)
-        for name, fn in [("ingest", ingest), ("clean", clean), ("enrich", enrich),
-                         ("validate", validate), ("score", score), ("output", output)]:
+        for name, fn in [
+            ("ingest", ingest),
+            ("clean", clean),
+            ("enrich", enrich),
+            ("validate", validate),
+            ("score", score),
+            ("output", output),
+        ]:
             graph.add_node(name, fn)
         graph.set_entry_point("ingest")
         graph.add_edge("ingest", "clean")
@@ -624,6 +705,7 @@ class TestDeepCascade:
 
 
 # ── 11. Mixed validators — some pass, some fail ────────────────────────────
+
 
 class TestMixedValidators:
     """Multiple validators on different nodes. One passes, one fails.
@@ -648,7 +730,10 @@ class TestMixedValidators:
 
         validators = {
             "node_a": lambda out: (len(out.get("documents", [])) > 0, "Must return documents"),
-            "node_b": lambda out: (len(out.get("answer", "")) >= 50, "Answer too short, must be >= 50 chars"),
+            "node_b": lambda out: (
+                len(out.get("answer", "")) >= 50,
+                "Answer too short, must be >= 50 chars",
+            ),
         }
 
         _, run_id = _run(graph, {"query": "test"}, validators=validators)
@@ -667,6 +752,7 @@ class TestMixedValidators:
 
 # ── 12. Hedging / refusal phrases in LLM output ────────────────────────────
 
+
 class TestLLMRefusalDetection:
     """LLM node returns common refusal/hedging phrases that ARGUS's
     semantic registry should catch."""
@@ -674,7 +760,12 @@ class TestLLMRefusalDetection:
     def test_refusal_phrases_flagged(self):
         def llm_refuses(state, **kw):
             return {
-                "answer": "I apologize, but I'm unable to provide specific financial advice. As an AI language model, I don't have access to real-time market data or your personal financial situation.",
+                "answer": (
+                    "I apologize, but I'm unable to provide specific "
+                    "financial advice. As an AI language model, I don't "
+                    "have access to real-time market data or your "
+                    "personal financial situation."
+                ),
                 "messages": ["llm: refused"],
             }
 
@@ -688,14 +779,14 @@ class TestLLMRefusalDetection:
 
         step = record.steps[0]
         assert step.inspection is not None
-        has_signal = (
-            len(step.inspection.semantic_signals) > 0
-            or step.status != "pass"
+        has_signal = len(step.inspection.semantic_signals) > 0 or step.status != "pass"
+        assert has_signal, (
+            "Refusal phrases ('I apologize', 'As an AI') should trigger semantic signals"
         )
-        assert has_signal, "Refusal phrases ('I apologize', 'As an AI') should trigger semantic signals"
 
 
 # ── 13. Error string in non-error field ─────────────────────────────────────
+
 
 class TestErrorStringInDataField:
     """A data field contains an error-like string value (not in an 'error' key).
@@ -727,6 +818,7 @@ class TestErrorStringInDataField:
 
 
 # ── 14. Crash mid-pipeline with root cause chain ───────────────────────────
+
 
 class TestCrashWithRootCause:
     """Node A drops 'documents'. Node B reads it, returns empty. Node C
@@ -766,6 +858,7 @@ class TestCrashWithRootCause:
 
 # ── 15. Redaction catches JWT and OpenAI key patterns ───────────────────────
 
+
 class TestPatternBasedRedaction:
     """Node output contains a JWT and an OpenAI key.
     Pattern-based redaction (without explicit key list) should catch them."""
@@ -778,7 +871,11 @@ class TestPatternBasedRedaction:
             data: str
             messages: Annotated[list[str], operator.add]
 
-        jwt = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJzdWIiOiIxMjM0NTY3ODkwIn0.dozjgNryP4J3jVmNHl0w5N_XgL0n3I9PlFUP0THsR8U"
+        jwt = (
+            "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9"
+            ".eyJzdWIiOiIxMjM0NTY3ODkwIn0"
+            ".dozjgNryP4J3jVmNHl0w5N_XgL0n3I9PlFUP0THsR8U"
+        )
         openai_key = "sk-proj-abc123def456ghi789jkl012mno345pqr678stu901vwx234yz"
 
         def leaky_node(state, **kw):
@@ -803,6 +900,7 @@ class TestPatternBasedRedaction:
         # Read raw JSON from disk to verify redaction
         import os
         from pathlib import Path
+
         runs_dir = Path(os.getcwd()) / ".argus" / "runs"
         run_file = runs_dir / f"{run_id}.json"
         assert run_file.exists()
@@ -820,6 +918,7 @@ class TestPatternBasedRedaction:
 
 
 # ── 16. Wildcard + named validator interaction ──────────────────────────────
+
 
 class TestWildcardAndNamedValidators:
     """Both a wildcard validator and a named validator run on the same node.
@@ -854,6 +953,7 @@ class TestWildcardAndNamedValidators:
 
 # ── 17. Large nested output — tool failure scan depth ───────────────────────
 
+
 class TestDeepNestedToolFailure:
     """Error buried 4 levels deep in nested dict. ARGUS scans up to depth 5,
     so it should find it."""
@@ -861,19 +961,23 @@ class TestDeepNestedToolFailure:
     def test_nested_error_found(self):
         def deeply_nested(state, **kw):
             return {
-                "tool_results": [{
-                    "tool": "complex_api",
-                    "response": {
-                        "data": {
-                            "results": {
-                                "items": [{
-                                    "error": "Nested authentication failure",
-                                    "code": 401,
-                                }]
+                "tool_results": [
+                    {
+                        "tool": "complex_api",
+                        "response": {
+                            "data": {
+                                "results": {
+                                    "items": [
+                                        {
+                                            "error": "Nested authentication failure",
+                                            "code": 401,
+                                        }
+                                    ]
+                                }
                             }
-                        }
+                        },
                     }
-                }],
+                ],
                 "messages": ["deeply_nested: returned complex structure"],
             }
 
@@ -889,13 +993,18 @@ class TestDeepNestedToolFailure:
         assert step.inspection is not None
         # Nested errors at depth 4 are found as partial_failure (warning severity).
         # has_tool_failure only flags critical severity, so check tool_failures list.
-        assert len(step.inspection.tool_failures) > 0, "Nested error at depth 4 should produce tool failures"
-        has_nested = any("nested" in tf.field_name or "items" in tf.field_name
-                         for tf in step.inspection.tool_failures)
+        assert len(step.inspection.tool_failures) > 0, (
+            "Nested error at depth 4 should produce tool failures"
+        )
+        has_nested = any(
+            "nested" in tf.field_name or "items" in tf.field_name
+            for tf in step.inspection.tool_failures
+        )
         assert has_nested, "Should detect the deeply nested error"
 
 
 # ── 18. Graph metadata for complex topology ────────────────────────────────
+
 
 class TestComplexGraphMetadata:
     """Graph with conditional edges — edge map should capture all possible
@@ -923,9 +1032,15 @@ class TestComplexGraphMetadata:
         graph.add_node("branch_b", branch_b)
         graph.add_node("branch_c", branch_c)
         graph.set_entry_point("classify")
-        graph.add_conditional_edges("classify", router, {
-            "a": "branch_a", "b": "branch_b", "c": "branch_c",
-        })
+        graph.add_conditional_edges(
+            "classify",
+            router,
+            {
+                "a": "branch_a",
+                "b": "branch_b",
+                "c": "branch_c",
+            },
+        )
         graph.add_edge("branch_a", END)
         graph.add_edge("branch_b", END)
         graph.add_edge("branch_c", END)
@@ -944,6 +1059,7 @@ class TestComplexGraphMetadata:
 
 
 # ── 19. Correlator origin detection ─────────────────────────────────────────
+
 
 class TestCorrelatorOriginDetection:
     """Pipeline: fetch(error) → process(degraded) → format(degraded).
@@ -968,7 +1084,9 @@ class TestCorrelatorOriginDetection:
         def format_out(state, **kw):
             ranked = state.get("ranked_documents", [])
             return {
-                "answer": f"Found {len(ranked)} relevant documents." if ranked else "No results found.",
+                "answer": f"Found {len(ranked)} relevant documents."
+                if ranked
+                else "No results found.",
                 "messages": ["format: done"],
             }
 
@@ -994,6 +1112,7 @@ class TestCorrelatorOriginDetection:
 
 
 # ── 20. Storage round-trip preserves complex structures ─────────────────────
+
 
 class TestStorageComplexRoundtrip:
     """Run with validators, tool failures, and anomaly signals.
@@ -1029,8 +1148,9 @@ class TestStorageComplexRoundtrip:
         assert any(not v.is_valid for v in step.validator_results)
 
         # Verify JSON on disk has the same data
-        from pathlib import Path
         import os
+        from pathlib import Path
+
         runs_dir = Path(os.getcwd()) / ".argus" / "runs"
         run_file = runs_dir / f"{run_id}.json"
         assert run_file.exists()
