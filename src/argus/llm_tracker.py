@@ -14,7 +14,15 @@ import threading
 from typing import Any
 
 from argus.models import LLMCallInfo, LLMUsage
-from argus.pricing import calculate_cost
+
+try:
+    from cloud.pricing import calculate_cost
+except ImportError:
+
+    def calculate_cost(
+        model_name: str, prompt_tokens: int, completion_tokens: int
+    ) -> float | None:
+        return None
 
 # ── Optional LangChain imports ──────────────────────────────────────────────
 
