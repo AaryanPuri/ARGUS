@@ -239,6 +239,8 @@ def _llm_generalize(
             regex = regex[6:].strip()
         if not regex:
             return None  # empty pattern would match every output
+        if regex.strip().lower() == pattern.strip().lower():
+            return None  # echoed the input verbatim — heuristic may do better
 
         # Validate it compiles
         compiled = re.compile(regex, re.IGNORECASE)
