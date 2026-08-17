@@ -16,6 +16,11 @@ reproduces the *contract* exactly. This is that server.
     upstream failure      -> upstream status, {"error": "<message>"}
     success               -> 200, the raw OpenAI response body, unmodified
 
+Not replicated: index.ts patches defaults into the payload
+(``model ?? "gpt-4o"``, ``max_tokens ?? 2000``, ``temperature ?? 0.3``) before
+forwarding upstream. See ``_serve_proxy`` for why the spike wants them left
+omitted.
+
 Two properties matter and are reproduced deliberately:
 
   1. The function never inspects the request path. Supabase routes
@@ -194,6 +199,12 @@ class _Handler(BaseHTTPRequestHandler):
             self._send(502, {"error": "Proxy error: connection reset"})
             return
 
+        # Simplification: index.ts fills in `model ?? "gpt-4o"`,
+        # `max_tokens ?? 2000` and `temperature ?? 0.3` before forwarding
+        # upstream. This replica does not, because every probe measures what
+        # BAML puts on the wire, not what OpenAI would receive after the edge
+        # function has patched it — P3 in particular is only meaningful if an
+        # omitted field stays omitted here.
         self._send(200, _completion_body(cfg["content"]))
 
     # -- an OpenAI-compatible vendor API ----------------------------------
