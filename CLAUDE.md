@@ -67,6 +67,7 @@ Every wrapped node executes through this pipeline:
 |------|------|
 | `src/argus/session.py` | Core monitoring session, wraps arbitrary callables |
 | `src/argus/watcher.py` | LangGraph adapter (thin wrapper over `ArgusSession`) |
+| `src/argus/pytest_instrument.py` | pytest `--argus` auto-wrap of `StateGraph.compile()` / compiled `invoke()` |
 | `src/argus/inspector.py` | Silent failure detection + root cause chain |
 | `src/argus/registry.py` | Semantic signature registry for LLM output heuristics |
 | `src/argus/models.py` | Dataclasses: `NodeEvent`, `RunRecord`, `InspectionResult`, `LLMUsage` |
