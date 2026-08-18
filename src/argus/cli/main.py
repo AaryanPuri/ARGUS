@@ -16,6 +16,7 @@ except ImportError:
     )
     raise SystemExit(1)
 
+from argus.cli.cmd_check import check_run
 from argus.cli.cmd_diff import diff_runs
 from argus.cli.cmd_doctor import doctor
 from argus.cli.cmd_fix import fix_run
@@ -109,6 +110,8 @@ _COMMANDS = [
     ("show", "inspect the most recent run"),
     ("show <id>", "inspect a specific run  (full id or 8-char prefix)"),
     ("show last", "same as show — inspect the most recent run"),
+    ("check last", "CI gate — exit 1 on crash / silent failure / semantic fail"),
+    ("check <id>", "CI gate for a specific run (full id or 8-char prefix)"),
     ("replay <id> <node>", "re-run from a saved node checkpoint"),
     ("replay <id> <node> --only", "re-run just that node in isolation"),
     ("replay <id> <node> --app mod:fn", "replay with a live graph factory"),
@@ -127,6 +130,7 @@ _COMMANDS = [
 _WHEN_TO_USE = [
     ("list", "after a run — get the run id for further commands"),
     ("show", "understand what happened: statuses, warnings, root cause"),
+    ("check", "fail CI when the last (or given) run was not clean"),
     ("replay", "re-run from a broken node after fixing the code (warns about live calls)"),
     ("inspect", "read exact input/output JSON for a specific step"),
     ("fix", "hand the root cause to a coding agent as a ready-made prompt"),
@@ -296,6 +300,23 @@ def cmd_show(
             show_last()
     else:
         show_run(run_id)
+
+
+@app.command("check")
+def cmd_check(
+    run_id: Optional[str] = typer.Argument(
+        None,
+        help="Run ID, 8-char prefix, or 'last' for the most recent run.",
+    ),
+) -> None:
+    """Fail (exit 1) if the last or given run was not clean.
+
+    Use in CI after a pipeline invoke::
+
+        argus check last
+        argus check <run-id>
+    """
+    check_run(run_id)
 
 
 @app.command("list")

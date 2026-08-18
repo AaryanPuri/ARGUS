@@ -32,9 +32,11 @@ mypy src/argus
 # Run the CLI
 argus --help
 argus show <run-id>
+argus check last
 argus diff <run-a> <run-b>
 argus replay <run-id> <node>
 argus ui
+pytest --argus                       # fail tests whose ARGUS run was not clean
 ```
 
 ## Architecture
@@ -77,6 +79,9 @@ Every wrapped node executes through this pipeline:
 | `src/argus/llm_proxy.py` | Shared LLM transport — all chat completion calls go through here. Resolves BYOK (OpenAI/Anthropic/Google) first, falls back to hosted Supabase proxy |
 | `src/argus/providers.py` | Per-provider request/response translation for BYOK (message format, model remapping, response normalization) |
 | `src/argus/signature_generalizer.py` | Generalizes failure signatures via LLM + heuristic fallback. Uses `llm_proxy` for the LLM path |
+| `src/argus/check.py` | CI gate: evaluate a `RunRecord` as clean vs crash / silent_failure / semantic_fail |
+| `src/argus/cli/cmd_check.py` | `argus check last` / `argus check <id>` — exit 1 when the run was not clean |
+| `src/argus/pytest_plugin.py` | pytest `--argus` plugin: fail tests whose instrumented invoke was not clean |
 | `src/argus/cli/main.py` | `argus` CLI entry point (Typer) |
 | `src/argus/cli/cmd_doctor.py` | `argus doctor` diagnostic command |
 | `src/argus/data/signatures.json` | Bundled semantic failure signatures |

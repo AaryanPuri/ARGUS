@@ -54,6 +54,9 @@ examples = [
 [project.scripts]
 argus = "argus.cli.main:app"
 
+[project.entry-points.pytest11]
+argus = "argus.pytest_plugin"
+
 [project.urls]
 Homepage = "https://github.com/VaradDurge/ARGUS"
 Repository = "https://github.com/VaradDurge/ARGUS"

@@ -235,6 +235,8 @@ watcher = ArgusWatcher(graph, config=config)
 argus list                           # all recorded runs
 argus show last                      # most recent run
 argus show <id>                      # inspect a specific run
+argus check last                     # CI gate — exit 1 on crash / silent failure / semantic fail
+argus check <id>                     # same gate for a specific run
 argus inspect <id> --step <node>     # dump raw input/output for a node
 argus fix <id>                       # fix prompt for the root cause, ready to paste
 argus replay <id> <node>             # re-run from a node
