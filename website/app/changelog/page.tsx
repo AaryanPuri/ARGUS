@@ -13,6 +13,18 @@ interface Release {
 
 const RELEASES: Release[] = [
   {
+    version: '0.9.3',
+    title: 'CI Gate & pytest Plugin',
+    date: '2026-08-18',
+    tag: 'minor',
+    highlights: [
+      'argus check last / argus check <id> — exit 1 when a run was not clean (crash, silent failure, semantic fail)',
+      'pytest --argus — auto-instrument LangGraph invokes in tests; silent failures become test failures',
+      'Heuristics-only in pytest (judge off); tests that never invoke a graph are unchanged',
+      'Guide, README, and argus-debug skill updated for CI workflows',
+    ],
+  },
+  {
     version: '0.8.11',
     title: 'Detection Pipeline Hardening',
     date: '2026-08-04',

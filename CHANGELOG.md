@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.9.3 — 2026-08-18
+
+- `argus check last` / `argus check <id>` — CI gate; exit 1 on crash, silent failure, semantic fail, missing fields, or tool failures
+- `pytest --argus` — auto-wrap LangGraph `compile()` / `invoke()` in tests; unclean runs fail the test
+- README, guide, and argus-debug skill document the CI gate and pytest plugin
+
 ## 0.9.2 — 2026-08-16
 
 - `argus init` writes Cursor/Claude skills that attach `ArgusWatcher` and debug from `.argus/runs`

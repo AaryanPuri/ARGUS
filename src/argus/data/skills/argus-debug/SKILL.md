@@ -5,7 +5,7 @@ description: >-
   Use when the user wants to attach ArgusWatcher, wire ARGUS, add monitoring,
   or run first-time setup; when a pipeline failed, a silent failure dropped
   fields, an agent run returned empty documents; or they mention ARGUS,
-  argus show, replay, or .argus/runs. Find the graph and call
+  argus show, argus check, pytest --argus, replay, or .argus/runs. Find the graph and call
   ArgusWatcher.attach() — do not rewrite types first. Read the RunRecord
   JSON instead of guessing from logs.
 ---
@@ -84,10 +84,33 @@ After the first invoke:
 argus show last         # first aha is in the terminal if something is wrong
 argus list              # see all recorded runs
 argus show <id>         # inspect a specific run by ID
+argus check last        # CI gate — exit 1 on crash / silent failure / semantic fail
 argus ui                # empty table = wrong dir or no runs yet
 ```
 
 If skills are missing, run `argus init` and commit the files it writes.
+
+## CI gate (fail the build)
+
+After a standalone run (script, notebook, or CI job):
+
+```bash
+argus check last          # exit 0 if clean, 1 if not
+argus check <run-id>      # same gate for a specific run
+```
+
+Fails on crash, silent failure, semantic fail, missing fields, or tool failures —
+not just when someone opens the dashboard.
+
+In pytest, add `--argus` so graph invokes are watched automatically (no
+`ArgusWatcher` in the test file required):
+
+```bash
+pytest --argus
+```
+
+Clean pipelines stay passing tests; unclean instrumented invokes fail that test.
+Tests that never invoke a graph are unchanged. Heuristics only (judge off).
 
 ## Where runs live
 

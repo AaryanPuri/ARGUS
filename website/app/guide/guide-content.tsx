@@ -53,7 +53,11 @@ After running the pipeline:
   argus show last         # first aha is in the terminal if something is wrong
   argus list              # see all recorded runs
   argus show <id>         # inspect a specific run by ID
+  argus check last        # CI gate — exit 1 on crash / silent failure / semantic fail
   argus ui                # open the web dashboard (empty table = wrong dir or no runs yet)
+
+For pytest, add --argus so silent failures fail the test (no ArgusWatcher in the test file required):
+  pytest --argus
 
 After the first run, the dashboard may suggest type hints to catch field-drop bugs. That is optional follow-up, not part of this integration.`
 
@@ -94,7 +98,7 @@ export default function GuideContent() {
       <section className="mb-16">
         <h2 className="text-xl font-semibold text-foreground mb-3">Quick Start</h2>
         <p className="text-[15px] text-muted-foreground leading-[1.7] mb-6">
-          Five steps. Heuristics work without login or an API key.
+          Five steps to attach; one more to gate CI. Heuristics work without login or an API key.
         </p>
 
         <div className="space-y-5 mb-8">
@@ -106,12 +110,14 @@ export default function GuideContent() {
         <div className="space-y-5 mb-8">
           <Step n={4} title="Run" text="Same as always. Failures print [argus] in the terminal; clean runs stay silent." />
           <Step n={5} title="Inspect" text="argus show last, argus fix <id>, or argus ui. Empty table → wrong directory or no run yet." />
+          <Step n={6} title="Gate CI" text="argus check last after a standalone run, or pytest --argus in your test suite. Unclean runs fail the build." />
         </div>
 
         <h3 className="text-sm font-semibold uppercase tracking-widest text-muted-foreground mb-4">After setup</h3>
         <div className="space-y-3 mb-6">
           <Row label="RUN PIPELINE" text="Run your LangGraph pipeline normally. A finding prints in the terminal when something is wrong; clean runs stay silent." />
           <Row label="CHECK TERMINAL" text="argus show last — no browser needed. Then argus ui if you want the dashboard." />
+          <Row label="FAIL THE BUILD" text="argus check last exits 1 on crash, silent failure, or semantic fail. Pair with pytest --argus so graph tests fail when the pipeline was not clean." />
           <Row label="EMPTY DASHBOARD" text="If the table is empty, the UI is serving a different .argus or you opened it before the first run. Check cwd vs project root." />
         </div>
       </section>
@@ -142,6 +148,21 @@ export default function GuideContent() {
         <CodeBlock title="Print a paste-ready fix prompt for the root-cause node">{`argus fix <run-id>`}</CodeBlock>
         <CodeBlock title="Show a specific run (full ID or 8-char prefix)">{`argus show <run-id>`}</CodeBlock>
         <CodeBlock title="Inspect raw input/output for a specific node">{`argus inspect <run-id> --step <node-name>`}</CodeBlock>
+
+        <h3 className="text-sm font-semibold uppercase tracking-widest text-muted-foreground mb-4 mt-8">CI &amp; testing</h3>
+        <CodeBlock title="Fail the build when the last run was not clean">{`argus check last`}</CodeBlock>
+        <CodeBlock title="Same gate for a specific run (full ID or prefix)">{`argus check <run-id>`}</CodeBlock>
+        <p className="text-[15px] text-muted-foreground leading-[1.7] mb-6">
+          Exit code <Code>0</Code> when the run is clean; <Code>1</Code> on crash, silent failure,
+          semantic fail, missing fields, or tool failures. Use after{" "}
+          <Code>python my_agent.py</Code> in GitHub Actions or any CI job.
+        </p>
+        <CodeBlock title="Fail pytest when an instrumented graph invoke was not clean">{`pytest --argus`}</CodeBlock>
+        <p className="text-[15px] text-muted-foreground leading-[1.7] mb-6">
+          Auto-wraps <Code>StateGraph.compile()</Code> for the test session. Clean pipelines stay
+          passing tests; missing fields, tool failures, crashes, and semantic degradation fail
+          that test. Tests that never invoke a graph are unchanged. Heuristics only (judge off).
+        </p>
 
         <h3 className="text-sm font-semibold uppercase tracking-widest text-muted-foreground mb-4 mt-8">Dashboard</h3>
         <CodeBlock title="Open the web dashboard">{`argus ui`}</CodeBlock>
