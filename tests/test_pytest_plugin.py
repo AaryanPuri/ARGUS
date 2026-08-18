@@ -188,7 +188,7 @@ def test_pytest_argus_auto_wraps_clean_invoke(pytester: pytest.Pytester):
     pytest.importorskip("argus.pytest_plugin")
     _prepare_plugin_project(pytester)
     pytester.makepyfile(_CLEAN_NO_WATCHER)
-    result = pytester.runpytest("-p", "argus.pytest_plugin", "--argus", "-q")
+    result = pytester.runpytest("--argus", "-q")
     result.assert_outcomes(passed=1)
 
 
@@ -197,7 +197,7 @@ def test_pytest_argus_auto_wraps_silent_failure_and_fails_test(pytester: pytest.
     pytest.importorskip("argus.pytest_plugin")
     _prepare_plugin_project(pytester)
     pytester.makepyfile(_SILENT_NO_WATCHER)
-    result = pytester.runpytest("-p", "argus.pytest_plugin", "--argus", "-q")
+    result = pytester.runpytest("--argus", "-q")
     result.assert_outcomes(failed=1)
     combined = str(result.stdout) + str(result.stderr)
     assert "argus check failed" in combined

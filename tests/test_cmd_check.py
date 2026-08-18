@@ -259,7 +259,7 @@ def _prepare_plugin_project(pytester: pytest.Pytester) -> None:
 def test_pytest_argus_clean_instrumented_invoke_passes(pytester: pytest.Pytester):
     _prepare_plugin_project(pytester)
     pytester.makepyfile(_CLEAN_TEST)
-    result = pytester.runpytest("-p", "argus.pytest_plugin", "--argus", "-q")
+    result = pytester.runpytest("--argus", "-q")
     result.assert_outcomes(passed=1)
 
 
@@ -267,7 +267,7 @@ def test_pytest_argus_clean_instrumented_invoke_passes(pytester: pytest.Pytester
 def test_pytest_argus_silent_failure_fails_the_test(pytester: pytest.Pytester):
     _prepare_plugin_project(pytester)
     pytester.makepyfile(_SILENT_TEST)
-    result = pytester.runpytest("-p", "argus.pytest_plugin", "--argus", "-q")
+    result = pytester.runpytest("--argus", "-q")
     result.assert_outcomes(failed=1)
     assert "argus check failed" in str(result.stdout) + str(result.stderr)
 
@@ -276,5 +276,5 @@ def test_pytest_argus_silent_failure_fails_the_test(pytester: pytest.Pytester):
 def test_pytest_without_argus_flag_does_not_fail_silent_invoke(pytester: pytest.Pytester):
     _prepare_plugin_project(pytester)
     pytester.makepyfile(_SILENT_TEST)
-    result = pytester.runpytest("-p", "argus.pytest_plugin", "-q")
+    result = pytester.runpytest("-q")
     result.assert_outcomes(passed=1)
