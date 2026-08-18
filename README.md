@@ -254,6 +254,18 @@ argus update                         # check for newer release
 
 ---
 
+## pytest plugin
+
+Silent failures become test failures without changing how you invoke the graph:
+
+```bash
+pytest --argus
+```
+
+ARGUS auto-wraps `StateGraph.compile()` / compiled `invoke()` for the test session. A clean pipeline stays a passing test; missing fields, tool failures, crashes, and semantic degradation fail that test. Tests that never invoke a graph are unchanged. Pair with `argus check last` in CI after a standalone run.
+
+---
+
 ## Web Dashboard
 
 ```bash
