@@ -716,6 +716,42 @@ def _build_causal_summary(
 
 # ── Replay impact ──────────────────────────────────────────────────────────────
 
+_INACTIVE_STATUSES = frozenset({"retried", "skipped"})
+_FAILURE_STATUSES = frozenset({"fail", "crashed", "semantic_fail", "degraded_input"})
+
+
+def _event_is_failure(event: NodeEvent | None) -> bool:
+    if event is None:
+        return True
+    if event.status in _FAILURE_STATUSES:
+        return True
+    insp = event.inspection
+    if insp is None:
+        return False
+    return bool(insp.is_silent_failure or insp.has_tool_failure or insp.missing_fields)
+
+
+def _last_active_event(record: RunRecord, node_name: str) -> NodeEvent | None:
+    events = [
+        e
+        for e in record.steps
+        if e.node_name == node_name and e.status not in _INACTIVE_STATUSES
+    ]
+    return events[-1] if events else None
+
+
+def _original_failure_node(original: RunRecord) -> str | None:
+    if original.first_failure_step:
+        return original.first_failure_step
+    if original.root_cause_chain:
+        return original.root_cause_chain[0]
+    for event in original.steps:
+        if event.status in _INACTIVE_STATUSES:
+            continue
+        if _event_is_failure(event):
+            return event.node_name
+    return None
+
 
 def compare_replay(replay: RunRecord, original: RunRecord) -> ReplayImpact:
     """Compare replay signal weights against the original run to identify improvements."""
@@ -758,12 +794,26 @@ def compare_replay(replay: RunRecord, original: RunRecord) -> ReplayImpact:
             f"Net change is {direction}."
         )
 
+    fail_node = _original_failure_node(original)
+    resolved: bool | None = None
+    if fail_node:
+        orig_ev = _last_active_event(original, fail_node)
+        replay_ev = _last_active_event(replay, fail_node)
+        if orig_ev is not None and _event_is_failure(orig_ev):
+            resolved = replay_ev is not None and not _event_is_failure(replay_ev)
+            verdict = "resolved" if resolved else "not resolved"
+            summary = f"Original failure at {fail_node}: {verdict}. {summary}"
+        else:
+            fail_node = None
+
     return ReplayImpact(
         improved_nodes=improved_nodes,
         regressed_nodes=regressed_nodes,
         key_fix_node=key_fix_node,
         downstream_improvement_count=len(improved_nodes),
         summary=summary,
+        original_failure_node=fail_node,
+        original_failure_resolved=resolved,
     )
 
 

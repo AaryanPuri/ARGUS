@@ -624,6 +624,17 @@ def _print_correlation_panel(record: RunRecord) -> None:
             lines.append(f"    [bold green]improved:[/bold green] {', '.join(ri.improved_nodes)}")
         if ri.regressed_nodes:
             lines.append(f"    [bold red]regressed:[/bold red] {', '.join(ri.regressed_nodes)}")
+        if ri.original_failure_node:
+            if ri.original_failure_resolved:
+                lines.append(
+                    f"    original failure [bold]{ri.original_failure_node}[/bold]  "
+                    f"[bold green]RESOLVED[/bold green]"
+                )
+            else:
+                lines.append(
+                    f"    original failure [bold]{ri.original_failure_node}[/bold]  "
+                    f"[bold red]NOT RESOLVED[/bold red]"
+                )
         lines.append(f"    [dim]{ri.summary}[/dim]")
 
     panel = Panel(
