@@ -601,6 +601,13 @@ def _print_correlation_panel(record: RunRecord) -> None:
             f"  [dim](step {primary.step_index})[/dim]"
             f"  confidence: [bold]{conf_pct}[/bold]"
         )
+        if primary.confidence_breakdown:
+            lines.append("  [dim]Why this score:[/dim]")
+            for label, value in primary.confidence_breakdown:
+                if label == "behavioral-only cap":
+                    lines.append(f"    [dim]{label}[/dim]  cap {value:.0%}")
+                else:
+                    lines.append(f"    [dim]{label}[/dim]  +{value:.2f}")
         if primary.signal_types:
             lines.append(f"  [dim]Signals:[/dim]  {', '.join(primary.signal_types)}")
 
