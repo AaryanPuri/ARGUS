@@ -336,6 +336,8 @@ class ReplayImpact:
     key_fix_node: str | None  # node whose fix most impacted downstream
     downstream_improvement_count: int
     summary: str
+    original_failure_node: str | None = None
+    original_failure_resolved: bool | None = None  # None if original had no failure
 
 
 @dataclass(frozen=True)
