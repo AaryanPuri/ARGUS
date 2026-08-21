@@ -719,8 +719,8 @@ def _build_causal_summary(
 
 def compare_replay(replay: RunRecord, original: RunRecord) -> ReplayImpact:
     """Compare replay signal weights against the original run to identify improvements."""
-    orig_weights = _compute_weights(original.steps)
-    replay_weights = _compute_weights(replay.steps)
+    orig_weights = _compute_weights(_active_events(original.steps))
+    replay_weights = _compute_weights(_active_events(replay.steps))
     common = set(orig_weights) & set(replay_weights)
 
     improved_nodes = sorted(n for n in common if orig_weights[n] - replay_weights[n] > 0.5)
@@ -770,9 +770,17 @@ def compare_replay(replay: RunRecord, original: RunRecord) -> ReplayImpact:
 # ── Main entry point ───────────────────────────────────────────────────────────
 
 
+_INACTIVE_STATUSES = frozenset({"retried", "skipped"})
+
+
+def _active_events(events: list[NodeEvent]) -> list[NodeEvent]:
+    """Drop superseded retry attempts and unchosen branches from correlation."""
+    return [e for e in events if e.status not in _INACTIVE_STATUSES]
+
+
 def correlate(record: RunRecord) -> CorrelationReport:
     """Produce a CorrelationReport for a completed RunRecord."""
-    events = record.steps
+    events = _active_events(record.steps)
     if not events:
         return CorrelationReport(
             run_id=record.run_id,

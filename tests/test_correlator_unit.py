@@ -97,6 +97,24 @@ class TestCorrelatorOrigins:
         origins = [o.node_name for o in report.degradation_origins]
         assert "b" in origins
 
+    def test_retried_attempt_signals_do_not_create_origin(self):
+        """Superseded retry iterations must not taint the final correlation."""
+        tf = ToolFailure("error_response", "error", "critical", "boom")
+        events = [
+            _event(
+                "retrieve",
+                0,
+                status="retried",
+                output={"error": "timeout"},
+                inspection=_insp(tool_failures=[tf], has_tf=True, missing=["documents"]),
+            ),
+            _event("retrieve", 1, status="pass", output={"documents": ["ok"]}),
+            _event("answer", 2, status="pass", output={"text": "hi"}),
+        ]
+        report = correlate(_record(events, {"retrieve": ["answer"]}, "clean"))
+        assert report.degradation_origins == []
+
+
 @pytest.mark.unit
 class TestCorrelatorPropagation:
     def test_field_drop_cascade(self):
