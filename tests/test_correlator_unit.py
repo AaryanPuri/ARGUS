@@ -87,6 +87,8 @@ class TestCorrelatorOrigins:
         report = correlate(_record(events, {"a": ["b"]}))
         assert len(report.degradation_origins) >= 1
         assert report.degradation_origins[0].node_name == "a"
+        breakdown = dict(report.degradation_origins[0].confidence_breakdown)
+        assert breakdown.get("tool_failure (critical)", 0) >= 3.0
 
     def test_crash_is_origin(self):
         events = [

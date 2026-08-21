@@ -375,6 +375,10 @@ def _deserialize_correlation(data: dict[str, Any]) -> CorrelationReport:
             signal_types=tuple(o.get("signal_types", [])),
             confidence=o["confidence"],
             reason=o["reason"],
+            confidence_breakdown=tuple(
+                (str(item[0]), float(item[1]))
+                for item in o.get("confidence_breakdown", [])
+            ),
         )
         for o in data.get("degradation_origins", [])
     ]

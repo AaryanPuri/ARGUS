@@ -309,6 +309,8 @@ class DegradationOrigin:
     signal_types: tuple[str, ...]  # e.g. ("tool_failure", "missing_field")
     confidence: float  # 0.0–1.0
     reason: str  # human-readable explanation
+    # Raw signal contributions that produced the score, e.g. ("tool_failure", 3.0)
+    confidence_breakdown: tuple[tuple[str, float], ...] = ()
 
 
 @dataclass(frozen=True)
