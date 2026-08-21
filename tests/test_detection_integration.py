@@ -121,7 +121,10 @@ class TestValidators:
         }
         session = _session(validators=validators)
         session.set_node_names(["analyze"])
-        analyze = session.wrap("analyze", lambda s: {**s, "analysis": "a perfectly long analysis text"})
+        analyze = session.wrap(
+            "analyze",
+            lambda s: {**s, "analysis": "a perfectly long analysis text"},
+        )
         analyze({})
         session.finalize()
 
