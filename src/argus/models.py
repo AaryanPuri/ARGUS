@@ -9,6 +9,12 @@ class ValidatorResult:
     validator_name: str  # e.g. "*:check_length" or "summarize:my_fn"
     is_valid: bool
     message: str
+    # "ok" | "warning" | "critical" — warnings do not fail the node or CI gate
+    severity: str = "critical"
+
+    @property
+    def is_blocking(self) -> bool:
+        return (not self.is_valid) and self.severity != "warning"
 
 
 @dataclass(frozen=True)
