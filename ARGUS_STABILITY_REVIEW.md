@@ -75,6 +75,45 @@ stable for fleet-scale use.
 10. **Docs**: document the JSON schema (`schema_version` exists — publish what it covers),
     the status vocabulary, and validator/anomaly field shapes.
 
+## Detection recall — fault-injection matrix (the number that matters most)
+
+Tolerating 50 good agents says little; catching broken ones is the product. We injected
+10 failure classes (one per defect type, all offline, all exiting 0 except the crash
+case) and scored ARGUS 0.10.1 heuristic-only mode. Regenerate: `.venv/bin/python
+faults/_run_matrix.py` → `faults/FAULT_MATRIX.md`.
+
+**Recall: 4/10 caught** (overall_status != clean).
+
+| caught | missed |
+|---|---|
+| dropped field (BA-006), crash root-cause (`crashed` + correct chain), placeholder output (PH-007/RF-005), validator breach | empty `{}` node update, swallowed type contract violation, loop stall, wasted retries, degraded/truncated text, implausibly fast LLM call |
+
+Root causes of the six misses, verified against installed source:
+
+1. **No-op node updates are invisible.** A node returning `{}` passes; nothing compares
+   "fields this node's consumers need" vs "fields it set". Needs consumer-aware schema
+   expectations.
+2. **Swallowed exceptions look clean.** If application code catches its own error and
+   falls back, every step reports pass. Consider flagging suspiciously broad fallbacks
+   (constant outputs after exception-shaped control flow).
+3. **Loop stall / wasted-retry analysis requires the hosted LLM proxy.**
+   `loop_analyzer.py` errors with "Not logged in" without `argus login`, leaving
+   `loop_analyses: []`. The README markets these as features; offline they silently
+   no-op. Either ship a local heuristic fallback or say plainly they're cloud-only.
+4. **Warnings don't escalate.** Degraded text earns only severity=warning
+   (`shallow_output`), step stays `pass`, run stays `clean`. Define when warnings should
+   aggregate into a failure (or expose a strictness knob).
+5. **Latency checks are unreachable by default.** `suspiciously_fast` requires
+   `min_expected_ms`; `ArgusConfig` has no default and `ArgusWatcher.__init__` doesn't
+   accept it as a kwarg — the check cannot fire on default config at all today.
+6. **PH signatures match whole fields only (`exact_ci`).** `"TBD"` embedded in prose
+   never fires; fault 07 was caught only because sentinel fields were exactly `"TBD"`.
+   Add substring/contains matching tiers for prose fields.
+
+Also observed: BA-001/BA-005 anomaly ids appear even in fully clean runs as low-severity
+noise — noise floor this high trains users to ignore anomaly ids entirely.
+
+
 ## Evidence appendix
 
 | Observation | Run id | Detail |
