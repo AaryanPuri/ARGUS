@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.10.4 — 2026-08-25
+
+- `argus show <id>` now resolves the requested run instead of always rendering the newest one; unknown ids and ambiguous prefixes exit 1 with a clean message instead of a traceback (#33, #39)
+
 ## 0.10.3 — 2026-08-25
 
 - `argus key set` / `argus key use` now exit 1 when the operation fails (unknown provider, no saved key), so scripts gating BYOK setup on exit codes see failures (#40)
