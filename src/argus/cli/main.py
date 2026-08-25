@@ -276,12 +276,18 @@ def cmd_show(
     ] = False,
 ) -> None:
     """Show run details. Use 'argus show last' or 'argus show <run-id>'."""
+    # allow_interspersed_args means Click may leave the positional id in
+    # ctx.args instead of binding run_id — normalize both into one token list
+    # so 'show <id>' actually resolves the id (not just the newest run).
+    tokens = ([run_id] if run_id else []) + list(ctx.args)
+    if tokens and tokens[0] == "run":  # back-compat: 'argus show run <id>'
+        tokens = tokens[1:]
+    selector = tokens[0] if tokens else None  # None or 'last' -> newest run
+
     if json:
         from argus.storage import last_run_id
 
-        target_id = run_id if (run_id and run_id not in ("last", "run")) else last_run_id()
-        if run_id == "run" and ctx.args:
-            target_id = ctx.args[0]
+        target_id = selector if (selector and selector != "last") else last_run_id()
         if target_id is None:
             _console.print("[red]Error:[/red] No runs found.")
             raise typer.Exit(1)
@@ -294,17 +300,10 @@ def cmd_show(
             _console.print(f"[red]Error:[/red] {e}")
             raise typer.Exit(1)
         return
-    if run_id is None or run_id == "last":
+    if selector is None or selector == "last":
         show_last()
-    elif run_id == "run":
-        # Backward compat: 'argus show run <id>' still works
-        actual_id = ctx.args[0] if ctx.args else None
-        if actual_id:
-            _show_run_strict(actual_id)
-        else:
-            show_last()
     else:
-        _show_run_strict(run_id)
+        _show_run_strict(selector)
 
 
 def _show_run_strict(run_id: str) -> None:
