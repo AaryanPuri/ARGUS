@@ -13,6 +13,16 @@ interface Release {
 
 const RELEASES: Release[] = [
   {
+    version: '0.10.5',
+    title: 'Double-encoded JSON detection',
+    date: '2026-08-25',
+    tag: 'patch',
+    highlights: [
+      'Rule 17: a string field that parses as a JSON object/array is flagged (json_in_string) — double-encoded JSON returned instead of a parsed structure',
+      'Advisory only (warning); fields where stringified payloads are expected (raw_response, log, payload, …) are skipped',
+    ],
+  },
+  {
     version: '0.10.4',
     title: 'argus show resolves the requested run',
     date: '2026-08-25',

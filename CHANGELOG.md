@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.10.5 — 2026-08-25
+
+- Rule 17 — double-encoded JSON detection: a string field that parses as a JSON object/array is flagged `json_in_string` (warning). Advisory only; fields where stringified payloads are expected (`raw_response`, `log`, `payload`, …) are skipped (#26)
+
 ## 0.10.4 — 2026-08-25
 
 - `argus show <id>` now resolves the requested run instead of always rendering the newest one; unknown ids and ambiguous prefixes exit 1 with a clean message instead of a traceback (#33, #39)
