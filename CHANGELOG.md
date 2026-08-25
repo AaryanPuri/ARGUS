@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.10.2 — 2026-08-25
+
+- Wave E: retry/cycle false positives, validator severity, replay verdict, confidence explanation (#32)
+- `empty_output` failure: a node returning a literal `{}` with successors downstream is flagged critical and blamed on the origin, not the downstream crash site (#31)
+- Per-invoke persistence: an attached `ArgusWatcher` now writes a separate run record for every `invoke()` / `stream()` / `batch()`, not just the first
+- Restore the `test_no_ordering_anomaly_correct_order` case that had been shadowed as dead code; single-source the correlator confidence weights and `_INACTIVE_STATUSES` constant
+
 ## 0.9.4 — 2026-08-25
 
 - `empty_output` failure: a node returning a literal `{}` with successors downstream is flagged critical and blamed on the origin, not the downstream crash site — fixes silent no-op nodes (#31). Only literal `{}` is flagged; dicts with keys (even empty-valued) and router/conditional nodes are exempt
