@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.10.3 — 2026-08-25
+
+- `argus key set` / `argus key use` now exit 1 when the operation fails (unknown provider, no saved key), so scripts gating BYOK setup on exit codes see failures (#40)
+
 ## 0.10.2 — 2026-08-25
 
 - Wave E: retry/cycle false positives, validator severity, replay verdict, confidence explanation (#32)
