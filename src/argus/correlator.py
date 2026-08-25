@@ -33,6 +33,23 @@ from argus.models import (
 
 _PLACEHOLDER_PREFIXES = ("PH-", "NL-")
 
+# Single source of truth for signal weights. Both the scorer
+# (_node_signal_weight / _node_structural_weight) and the human-facing
+# _confidence_breakdown read these — change a weight here and both stay in sync.
+_W_TOOL_CRITICAL = 3.0
+_W_TOOL_WARNING = 1.5
+_W_MISSING_FIELD = 0.5
+_W_ANOMALY_CRITICAL = 2.0
+_W_ANOMALY = 0.8
+_W_CRASH_FLOOR = 2.0
+_W_BEHAVIORAL_ONLY_CAP = 0.4
+_ANOMALY_CRITICAL_THRESHOLD = 0.7
+
+# Statuses that mean a node did not really contribute an execution (a retried
+# attempt that was superseded, or a skipped branch). Defined once, used wherever
+# events are filtered.
+_INACTIVE_STATUSES = frozenset({"retried", "skipped"})
+
 
 def _node_signal_weight(event: NodeEvent) -> float:
     """Assign a numeric degradation weight to a node's collected signals.
@@ -50,14 +67,18 @@ def _node_signal_weight(event: NodeEvent) -> float:
     insp = event.inspection
     if insp is not None:
         for tf in insp.tool_failures:
-            weight += 3.0 if tf.severity == "critical" else 1.5
+            weight += _W_TOOL_CRITICAL if tf.severity == "critical" else _W_TOOL_WARNING
         # semantic_signals intentionally excluded — already in tool_failures
-        weight += len(insp.missing_fields) * 0.5
+        weight += len(insp.missing_fields) * _W_MISSING_FIELD
         # empty_fields intentionally excluded — informational only
     for anomaly in event.anomaly_signals:
-        weight += 2.0 if anomaly.suspicion_score > 0.7 else 0.8
+        weight += (
+            _W_ANOMALY_CRITICAL
+            if anomaly.suspicion_score > _ANOMALY_CRITICAL_THRESHOLD
+            else _W_ANOMALY
+        )
     if event.status == "crashed":
-        weight = max(weight, 2.0)
+        weight = max(weight, _W_CRASH_FLOOR)
     return round(weight, 3)
 
 
@@ -76,12 +97,12 @@ def _node_structural_weight(event: NodeEvent) -> float:
     insp = event.inspection
     if insp is not None:
         for tf in insp.tool_failures:
-            weight += 3.0 if tf.severity == "critical" else 1.5
+            weight += _W_TOOL_CRITICAL if tf.severity == "critical" else _W_TOOL_WARNING
         # semantic_signals intentionally excluded — already in tool_failures
-        weight += len(insp.missing_fields) * 0.5
+        weight += len(insp.missing_fields) * _W_MISSING_FIELD
         # empty_fields intentionally excluded — informational only
     if event.status == "crashed":
-        weight = max(weight, 2.0)
+        weight = max(weight, _W_CRASH_FLOOR)
     return round(weight, 3)
 
 
@@ -213,20 +234,22 @@ def _confidence_breakdown(
         crit = sum(1 for tf in insp.tool_failures if tf.severity == "critical")
         warn = sum(1 for tf in insp.tool_failures if tf.severity != "critical")
         if crit:
-            items.append(("tool_failure (critical)", round(crit * 3.0, 3)))
+            items.append(("tool_failure (critical)", round(crit * _W_TOOL_CRITICAL, 3)))
         if warn:
-            items.append(("tool_failure (warning)", round(warn * 1.5, 3)))
+            items.append(("tool_failure (warning)", round(warn * _W_TOOL_WARNING, 3)))
         if insp.missing_fields:
-            items.append(("missing_fields", round(len(insp.missing_fields) * 0.5, 3)))
+            items.append(
+                ("missing_fields", round(len(insp.missing_fields) * _W_MISSING_FIELD, 3))
+            )
     for anomaly in event.anomaly_signals:
-        if anomaly.suspicion_score > 0.7:
-            items.append(("behavioral_anomaly (critical)", 2.0))
+        if anomaly.suspicion_score > _ANOMALY_CRITICAL_THRESHOLD:
+            items.append(("behavioral_anomaly (critical)", _W_ANOMALY_CRITICAL))
         else:
-            items.append(("behavioral_anomaly", 0.8))
+            items.append(("behavioral_anomaly", _W_ANOMALY))
     if event.status == "crashed":
-        items.append(("crash", 2.0))
+        items.append(("crash", _W_CRASH_FLOOR))
     if dampened:
-        items.append(("behavioral-only cap", 0.4))
+        items.append(("behavioral-only cap", _W_BEHAVIORAL_ONLY_CAP))
     return tuple(items)
 
 
@@ -746,7 +769,6 @@ def _build_causal_summary(
 
 # ── Replay impact ──────────────────────────────────────────────────────────────
 
-_INACTIVE_STATUSES = frozenset({"retried", "skipped"})
 _FAILURE_STATUSES = frozenset({"fail", "crashed", "semantic_fail", "degraded_input"})
 
 
@@ -848,9 +870,6 @@ def compare_replay(replay: RunRecord, original: RunRecord) -> ReplayImpact:
 
 
 # ── Main entry point ───────────────────────────────────────────────────────────
-
-
-_INACTIVE_STATUSES = frozenset({"retried", "skipped"})
 
 
 def _active_events(events: list[NodeEvent]) -> list[NodeEvent]:

@@ -142,6 +142,10 @@ def test_no_ordering_anomaly_on_retry_cycle():
     findings = analyze_tool_chains(record)
     tc002 = [f for f in findings if f.finding_id == "TC-002"]
     assert tc002 == []
+
+
+@pytest.mark.unit
+def test_no_ordering_anomaly_correct_order():
     """TC-002: Correct execution order should not trigger."""
     steps = [
         _make_event("search", 0, output_dict={"results": ["a"]}),
