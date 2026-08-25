@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.9.4 — 2026-08-25
+
+- `empty_output` failure: a node returning a literal `{}` with successors downstream is flagged critical and blamed on the origin, not the downstream crash site — fixes silent no-op nodes (#31). Only literal `{}` is flagged; dicts with keys (even empty-valued) and router/conditional nodes are exempt
+- Per-invoke persistence: an attached `ArgusWatcher` now writes a separate run record for every `invoke()` / `stream()` / `batch()`, not just the first (via `ArgusSession.begin_new_run()`)
 ## 0.10.1 — 2026-08-22
 
 Version alignment. PyPI treated `0.10.0` (14 Aug, same era as `0.9.1`) as latest because `0.10.0 > 0.9.3`, so `pip install argus-agents` skipped the `0.9.2` / `0.9.3` work. This release republishes that work as `0.10.1`.
