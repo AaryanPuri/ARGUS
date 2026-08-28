@@ -317,3 +317,16 @@ class TestDegradationPhraseSignatures:
         mid = "The list goes on and so on until the loop exits and then we return."
         ids = {m.sig_id for m in scan_value(mid, registry)}
         assert "SP-026" not in ids
+
+    @pytest.mark.parametrize(
+        ("text", "expected"),
+        [
+            ("Affected files: a.py, b.py, c.py, and so on...", "SP-026"),
+            ("Stages: init, build, deploy, and many more...", "SP-025"),
+            ("Stages: init, build, deploy, and so on…", "SP-026"),
+        ],
+    )
+    def test_lazy_truncation_matches_ellipsis(self, registry, text, expected):
+        """SP-025/026 must catch the ellipsis-terminated form, not just a bare period."""
+        ids = {m.sig_id for m in scan_value(text, registry)}
+        assert expected in ids

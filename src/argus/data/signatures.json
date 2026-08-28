@@ -772,7 +772,7 @@
       "pattern": "as mentioned above",
       "match_strategy": "contains_ci",
       "severity": "warning",
-      "description": "Back-reference to absent prior context in a single-turn node — model assumes conversation history that isn't present",
+      "description": "Back-reference to earlier content — the referenced context may not exist in what this node was given",
       "source": "builtin",
       "metadata": {
         "confidence": null,
@@ -787,7 +787,7 @@
       "pattern": "as i said earlier",
       "match_strategy": "contains_ci",
       "severity": "warning",
-      "description": "Self-referential back-reference — model assumes an earlier turn that doesn't exist",
+      "description": "Self-referential back-reference to a previous turn — may assume conversation history the node never received",
       "source": "builtin",
       "metadata": {
         "confidence": null,
@@ -802,7 +802,7 @@
       "pattern": "as previously mentioned",
       "match_strategy": "contains_ci",
       "severity": "warning",
-      "description": "Back-reference to absent prior context — model assumes information it was never given",
+      "description": "Back-reference to previously supplied information — may assume context the node was never given",
       "source": "builtin",
       "metadata": {
         "confidence": null,
@@ -814,7 +814,7 @@
     {
       "id": "SP-025",
       "category": "suspicious_phrases",
-      "pattern": "\\band many more\\.?\\s*$",
+      "pattern": "\\band many more[.…]*\\s*$",
       "match_strategy": "regex",
       "severity": "warning",
       "description": "Output ends with 'and many more' — enumeration abandoned mid-list",
@@ -829,7 +829,7 @@
     {
       "id": "SP-026",
       "category": "suspicious_phrases",
-      "pattern": "\\band so on\\.?\\s*$",
+      "pattern": "\\band so on[.…]*\\s*$",
       "match_strategy": "regex",
       "severity": "warning",
       "description": "Output ends with 'and so on' — enumeration abandoned mid-list",
